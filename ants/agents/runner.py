@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from ants.runtime.config import load_agent_config
 from ants.runtime.runtime_config import get_llm_api_key, load_runtime_config
+from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import (
     ensure_trace_dirs,
     get_agent_base_dir,
@@ -213,6 +215,12 @@ PRODUCTION_SENSITIVE_TOOLS = frozenset({"write_file", "edit_file", "run_bash"})
 
 def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
     """Run one task: load context, call LLM with tools, persist conversation. Returns summary."""
+    task_payload = task_payload or {}
+    trace_log(
+        "run_task_start",
+        trace_id=task_payload.get("trace_id"),
+        agent_id=agent_id,
+    )
     config = load_agent_config()
     if config.agent_id != agent_id:
         config = load_agent_config(Path(os.getenv("ANT_CONFIG", "")))
@@ -242,7 +250,11 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
             if tools_spec:
                 kwargs["tools"] = tools_spec
                 kwargs["tool_choice"] = "auto"
+            turn = 11 - max_rounds
+            trace_log("llm_call", trace_id=task_payload.get("trace_id"), agent_id=agent_id, turn=turn)
+            t0 = time.perf_counter()
             resp = client.chat.completions.create(**kwargs)
+            request_duration_ms = round((time.perf_counter() - t0) * 1000)
             choice = resp.choices[0] if resp.choices else None
             if not choice:
                 break
@@ -252,12 +264,17 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
                 ct = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", 0)
                 tt = getattr(usage, "total_tokens", None) or (pt + ct)
                 try:
+                    # Structured llm_usage payload: who, when, model, tokens, latency (ttft optional with streaming).
                     write_trace(agent_id, "llm_usage", {
                         "ts": utc_now_iso(),
+                        "agent_id": agent_id,
                         "model": llm_cfg.get("model", ""),
                         "prompt_tokens": pt,
                         "completion_tokens": ct,
                         "total_tokens": tt,
+                        "request_duration_ms": request_duration_ms,
+                        "ttft_ms": None,
+                        "turn": 11 - max_rounds,
                     })
                 except Exception:
                     pass
@@ -273,6 +290,7 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
                 break
             for tc in msg.tool_calls:
                 name = tc.function.name if hasattr(tc.function, "name") else tc.function.get("name")
+                trace_log("tool_call", trace_id=task_payload.get("trace_id"), agent_id=agent_id, tool=name)
                 args_str = tc.function.arguments if hasattr(tc.function, "arguments") else tc.function.get("arguments", "{}")
                 try:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
@@ -287,6 +305,12 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
                 ):
                     result = "Blocked: production action requires human approval."
                 else:
+                    if name == "send_aip" and task_payload:
+                        payload = args.get("payload") or {}
+                        trace_id_val = task_payload.get("trace_id")
+                        if trace_id_val is not None:
+                            payload = {**payload, "trace_id": trace_id_val, "correlation_id": trace_id_val}
+                        args["payload"] = payload
                     fn = tools_impl.get(name)
                     result = f"Error: unknown tool {name}" if not fn else str(fn(**args))
                 messages.append({
@@ -301,7 +325,7 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
         conv_path.parent.mkdir(parents=True, exist_ok=True)
         for m in messages:
             if m.get("role") in ("user", "assistant") and m.get("content"):
-                row = {"ts": utc_now_iso(), "role": m["role"], "content": m["content"]}
+                row = {"ts": utc_now_iso(), "agent_id": agent_id, "role": m["role"], "content": m["content"]}
                 with conv_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(row, ensure_ascii=False) + "\n")
                 try:
@@ -309,7 +333,20 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
                 except Exception:
                     pass
         last_content = messages[-1].get("content", "") if messages else ""
+        trace_log(
+            "run_task_done",
+            trace_id=task_payload.get("trace_id"),
+            agent_id=agent_id,
+            ok=True,
+        )
         return {"ok": True, "last_response": last_content[:500]}
     except Exception as e:
+        trace_log(
+            "run_task_done",
+            trace_id=task_payload.get("trace_id"),
+            agent_id=agent_id,
+            ok=False,
+            error=str(e),
+        )
         write_trace_dual(agent_id, "log", "runner.jsonl", {"event": "error", "error": str(e)})
         return {"ok": False, "error": str(e)}

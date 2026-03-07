@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ants.protocol.aip import AIPAction, AIPMessage, AIPStatus
-from ants.protocol.send import SendParams, async_send_aip
+from ants.protocol.send import SendParams, async_send_aip, async_send_aip_batch
 from ants.protocol.status import StatusScope
 from ants.runtime.config import (
     get_config_dir,
@@ -25,6 +28,7 @@ from ants.runtime.docker_manager import DockerSpawner, WORKER_SERVICE_PORT
 from ants.runtime.models import AgentConfig
 from ants.runtime.runtime_config import load_runtime_config, runtime_config_to_env
 from ants.runtime.status import StatusAggregator, build_recursive_status_tree
+from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import append_aip_message, ensure_trace_dirs, write_log
 
 
@@ -83,6 +87,19 @@ def _request_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _status_cache_ttl_sec() -> float:
+    """Colony status cache TTL in seconds. 0 = disabled."""
+    try:
+        v = os.getenv("ANTS_STATUS_CACHE_TTL_SEC", "5")
+        return float(v)
+    except ValueError:
+        return 5.0
+
+
+# Colony status cache: key = request_base_url, value = (expiry_ts, payload).
+_colony_status_cache: dict[str, tuple[float, dict]] = {}
+
+
 # ---------- Interface 1: Status / work info (aggregate for colony) ----------
 
 @app.get("/status")
@@ -94,8 +111,26 @@ async def status(
     """Return colony, self, or subtree status for the queen topology."""
     root_config: AgentConfig = app.state.root_config
     visible_agents: list[AgentConfig] = app.state.visible_agents
+    request_base_url = _request_base_url(request)
+
+    # Only cache full colony response (scope=colony, no root).
+    if scope == StatusScope.colony and root is None:
+        ttl = _status_cache_ttl_sec()
+        if ttl > 0:
+            now = time.monotonic()
+            entry = _colony_status_cache.get(request_base_url)
+            if entry is not None:
+                expiry_ts, payload = entry
+                if now < expiry_ts:
+                    return payload
+            colony = StatusAggregator(root_config).build(
+                visible_agents, request_base_url=request_base_url
+            )
+            _colony_status_cache[request_base_url] = (now + ttl, colony.model_dump(mode="json"))
+            return _colony_status_cache[request_base_url][1]
+
     aggregator = StatusAggregator(root_config)
-    colony = aggregator.build(visible_agents, request_base_url=_request_base_url(request))
+    colony = aggregator.build(visible_agents, request_base_url=request_base_url)
 
     if scope == StatusScope.self_scope:
         root_status = next((item for item in colony.ants if item.agent_id == root_config.agent_id), None)
@@ -135,18 +170,37 @@ def _aip_send_params() -> SendParams:
     return SendParams(timeout=timeout, max_retries=max_retries)
 
 
+def _resolve_worker_base_url(
+    target_agent_id: str,
+    visible_agents: list[AgentConfig],
+    msg: AIPMessage | None = None,
+) -> str:
+    """Resolve base URL for a worker (local or to_base_url). Used by forward and batch."""
+    target_cfg = next((a for a in visible_agents if a.agent_id == target_agent_id), None)
+    if msg and msg.to_base_url:
+        return msg.to_base_url.rstrip("/")
+    if target_cfg and target_cfg.status_api_base:
+        return target_cfg.status_api_base.rstrip("/")
+    return f"http://ants-{target_agent_id}:{WORKER_SERVICE_PORT}"
+
+
 async def _forward_aip(msg: AIPMessage, target_agent_id: str, visible_agents: list[AgentConfig]) -> dict:
     """Forward AIP to local worker or remote (to_base_url). Uses protocol async_send_aip with retry/backoff."""
-    target_cfg = next((a for a in visible_agents if a.agent_id == target_agent_id), None)
-    base_url = None
-    if msg.to_base_url:
-        base_url = msg.to_base_url.rstrip("/")
-    elif target_cfg and target_cfg.status_api_base:
-        base_url = target_cfg.status_api_base.rstrip("/")
-    if not base_url:
-        base_url = f"http://ants-{target_agent_id}:{WORKER_SERVICE_PORT}"
+    base_url = _resolve_worker_base_url(target_agent_id, visible_agents, msg)
+    body = msg.to_wire()
+    body["aip_id"] = body.get("message_id", "")
+    log_extra: dict[str, Any] = {}
+    if getattr(msg, "trace_id", None):
+        log_extra["trace_id"] = msg.trace_id
+    if getattr(msg, "from_ant", None):
+        log_extra["agent_id"] = msg.from_ant
     try:
-        return await async_send_aip(base_url, msg.to_wire(), params=_aip_send_params())
+        return await async_send_aip(
+            base_url,
+            body,
+            params=_aip_send_params(),
+            log_extra=log_extra if log_extra else None,
+        )
     except Exception as e:
         raise HTTPException(503, f"Ant {target_agent_id} unreachable: {e}") from e
 
@@ -173,8 +227,14 @@ def _decompose_instruction_sync(instruction: str, workers: list[AgentConfig]) ->
         f"Use only agent_id from the workers list. One task per worker at most.\n\n"
         f"User instruction: {instruction}\n\nWorkers: {workers_json}"
     )
+    timeout = 60.0
     try:
-        with httpx.Client(timeout=60.0) as client:
+        t = os.getenv("ANTS_DECOMPOSE_LLM_TIMEOUT", "60")
+        timeout = float(t)
+    except ValueError:
+        pass
+    try:
+        with httpx.Client(timeout=timeout) as client:
             r = client.post(
                 f"{base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -242,33 +302,89 @@ async def aip_receive(body: dict) -> dict:
         return out
 
     if msg.action == AIPAction.user_instruction:
+        trace_id = msg.trace_id or body.get("trace_id") or str(uuid4())
+        msg.trace_id = trace_id
+        msg.correlation_id = trace_id
+        payload_base = dict(msg.payload or {})
+        payload_base["trace_id"] = trace_id
+        msg.payload = payload_base
+        instruction_text = payload_base.get("instruction", "")
+
+        trace_log(
+            "user_instruction",
+            trace_id=trace_id,
+            agent_id=root_config.agent_id,
+            instruction_len=len(instruction_text),
+        )
+
         workers = [a for a in visible_agents if a.agent_id != root_config.agent_id]
         if not workers:
             return {"ok": False, "message": "no workers available"}
-        instruction_text = (msg.payload or {}).get("instruction", "")
         tasks = await asyncio.to_thread(_decompose_instruction_sync, instruction_text, workers)
         if tasks:
-            last_out = None
+            trace_log(
+                "delegate",
+                trace_id=trace_id,
+                agent_id=root_config.agent_id,
+                n=len(tasks),
+                to=[t["to"] for t in tasks],
+            )
+            params = _aip_send_params()
+            batch_requests: list[tuple[str, dict]] = []
             for t in tasks:
                 to_id = t["to"]
                 summary = t.get("summary", "")
-                payload = {**(msg.payload or {}), "summary": summary}
+                payload = {**payload_base, "summary": summary}
                 forward_msg = AIPMessage(
                     from_ant=root_config.agent_id,
                     to=to_id,
                     action=AIPAction.assign_task,
                     intent="user_instruction",
                     payload=payload,
+                    trace_id=trace_id,
+                    correlation_id=trace_id,
                 )
-                last_out = await _forward_aip(forward_msg, to_id, visible_agents)
-            return last_out or {"ok": True, "message": "delegated"}
+                base_url = _resolve_worker_base_url(to_id, visible_agents, forward_msg)
+                wire = forward_msg.to_wire()
+                wire["aip_id"] = wire.get("message_id", "")
+                batch_requests.append((base_url, wire))
+            results = await async_send_aip_batch(
+                batch_requests,
+                params=params,
+                log_extra={"trace_id": trace_id, "agent_id": root_config.agent_id},
+            )
+            for i, r in enumerate(results):
+                if isinstance(r, BaseException):
+                    to_id = tasks[i]["to"]
+                    trace_log(
+                        "delegate_failed",
+                        trace_id=trace_id,
+                        agent_id=root_config.agent_id,
+                        to=to_id,
+                        error=str(r),
+                    )
+                    write_log(
+                        root_config.agent_id,
+                        "runtime.jsonl",
+                        {"event": "aip_batch_failed", "to": to_id, "error": str(r)},
+                    )
+                    raise HTTPException(503, f"Ant {to_id} unreachable: {r}") from r
+            return results[-1] if results else {"ok": True, "message": "delegated"}
         first = workers[0]
         forward_msg = AIPMessage(
             from_ant=root_config.agent_id,
             to=first.agent_id,
             action=AIPAction.assign_task,
             intent="user_instruction",
-            payload=msg.payload,
+            payload=payload_base,
+            trace_id=trace_id,
+            correlation_id=trace_id,
+        )
+        trace_log(
+            "delegate_fallback",
+            trace_id=trace_id,
+            agent_id=root_config.agent_id,
+            to=first.agent_id,
         )
         return await _forward_aip(forward_msg, first.agent_id, visible_agents)
 

@@ -30,17 +30,23 @@ def run(
     if not base:
         return "Error: ANT_QUEEN_URL not set (cannot reach queen to send AIP)"
     from_ant = os.getenv("ANT_AGENT_ID", "unknown")
+    payload = payload or {}
     body = {
         "from": from_ant,
         "to": to_agent_id,
         "action": action,
         "intent": intent,
-        "payload": payload or {},
+        "payload": payload,
     }
+    body["aip_id"] = payload.get("message_id") or payload.get("aip_id") or ""
+    log_extra = {k: payload[k] for k in ("trace_id",) if payload.get(k) is not None}
+    agent_id = os.getenv("ANT_AGENT_ID")
+    if agent_id:
+        log_extra["agent_id"] = agent_id
     try:
         from ants.protocol.send import send_aip, SendParams
         params = SendParams(timeout=30.0, max_retries=4)
-        data = send_aip(base, body, params=params)
+        data = send_aip(base, body, params=params, log_extra=log_extra if log_extra else None)
         return json.dumps(data, ensure_ascii=False)
     except Exception as e:
         return f"Error sending AIP: {e}"

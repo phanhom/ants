@@ -37,15 +37,43 @@ def _connect():
         return None
     try:
         import pymysql
-        _connection = pymysql.connect(
-            host=cfg["host"],
-            port=cfg["port"],
-            user=cfg["user"],
-            password=cfg["password"],
-            database=cfg["database"],
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-        )
+        try:
+            _connection = pymysql.connect(
+                host=cfg["host"],
+                port=cfg["port"],
+                user=cfg["user"],
+                password=cfg["password"],
+                database=cfg["database"],
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+            )
+        except pymysql.err.OperationalError as e:
+            if e.args[0] == 1049:  # Unknown database
+                _conn_no_db = pymysql.connect(
+                    host=cfg["host"],
+                    port=cfg["port"],
+                    user=cfg["user"],
+                    password=cfg["password"],
+                    charset="utf8mb4",
+                )
+                db = cfg["database"]
+                with _conn_no_db.cursor() as cur:
+                    safe_db = "`" + db.replace("`", "``") + "`"
+                    cur.execute(
+                        "CREATE DATABASE IF NOT EXISTS " + safe_db + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                    )
+                _conn_no_db.close()
+                _connection = pymysql.connect(
+                    host=cfg["host"],
+                    port=cfg["port"],
+                    user=cfg["user"],
+                    password=cfg["password"],
+                    database=cfg["database"],
+                    charset="utf8mb4",
+                    cursorclass=pymysql.cursors.DictCursor,
+                )
+            else:
+                raise
         _ensure_table(_connection)
         return _connection
     except Exception:
@@ -65,17 +93,18 @@ def _ensure_table(conn) -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_agent_type (agent_id, trace_type),
                 INDEX idx_ts (ts)
-            )
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
     conn.commit()
 
 
 def write_trace(agent_id: str, trace_type: str, payload: dict[str, Any]) -> bool:
-    """Write one trace event to MySQL. Returns True if written, False if skipped or failed."""
+    """Write one trace event to MySQL. agent_id is the agent name (e.g. backend). Payload always includes agent_id. UTF-8."""
     conn = _connect()
     if conn is None:
         return False
     ts = datetime.now(timezone.utc).isoformat()
+    payload = {**payload, "agent_id": agent_id}
     try:
         with conn.cursor() as cur:
             cur.execute(

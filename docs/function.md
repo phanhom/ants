@@ -48,7 +48,9 @@
 - **发送回退（协议库）**：为在千万级调用下降低故障率，`ants.protocol.send` 提供：
   - **SendParams**：`timeout`、`max_retries`、`backoff_base`、`backoff_max`、`backoff_jitter`、可选 `idempotency_key`。
   - **send_aip(base_url, body, params)**（同步）、**async_send_aip(base_url, body, params)**（异步）：对 `POST {base_url}/aip` 做指数退避重试；对 5xx、超时、连接错误重试，对 4xx 不重试。
+  - **send_aip_batch(requests, params)**（同步）、**async_send_aip_batch(requests, params)**（异步）：多路并行发送，每条仍走上述重试/退避；蚁后指令拆解后批量下发使用异步接口；同步场景可用 send_aip_batch。
   - **环境**：`AIP_SEND_TIMEOUT`、`AIP_SEND_MAX_RETRIES` 可覆盖默认（默认 timeout=30，max_retries=4）。
+  - **日志**：标准库 `logging`，logger 名为 `ants.protocol.send`。库内仅保留一个 id 字段 **aip_id**（从 body 读取）；设 `AIP_PROTOCOL_LOG=1` 可开启 INFO。传 `logger=` 接入项目 logger，传 `log_extra=` 注入 trace_id、demand_id 等，由调用方（如 Ants）在 log_extra 中传入以便整链追踪。
   - 蚁后转发与工人 send_aip 工具均使用该层，保证全球多机房下可配置、可观测、故障率可控。
 
 ### 7. 测试/正式环境与运行时配置
@@ -59,8 +61,11 @@
 
 ### 8. 留痕与双存储
 
-- **文件库**（volumes/<agent_id> 下 workspace、logs、conversations、aip、todos、reports、context）：供工人构建上下文、拼 prompt；对话与留痕先写文件。
-- **数据库**：与文件库双写；LLM token 使用量仅写 DB。Reports 经 append_report 工具双写。
+- **跟踪日志**：`ants.runtime.trace_log` 在 ANTS_TRACE_LOG=1 时向 logger `ants.trace` 打一行式事件（event + trace_id、agent_id、ts 等）；每条 extra 含 ts（ISO UTC）便于 Grafana 按时间查。Queen 打 user_instruction/delegate、Worker 打 assign_task、Runner 打 run_task_start/run_task_done、llm_call、tool_call；调用 AIP 发送时通过 log_extra 传入 trace_id、agent_id，与协议层 aip_id 一起构成整链可查。
+- **agent_id 约定**：所有留痕（trace_log、write_log、write_trace、conversation、aip）均带 agent_id，值为配置中的 agent 名称（如 creator_decider、backend），非 UUID，便于按「谁」过滤。
+- **文件库**（volumes/<agent_id> 下 workspace、logs、conversations、aip、todos、reports、context）：供工人构建上下文、拼 prompt；对话与留痕先写文件；JSONL 与落库统一使用 UTF-8（ensure_ascii=False / utf8mb4）。
+- **数据库**：与文件库双写；建库/建表自动使用 utf8mb4；write_trace 时 payload 内自动注入 agent_id。LLM token 使用量仅写 DB（trace_type=llm_usage）。Reports 经 append_report 工具双写。
+- **llm_usage 负载约定**：payload 含 ts（ISO）、agent_id（工人）、model、prompt_tokens/completion_tokens/total_tokens、request_duration_ms（整次调用耗时）、ttft_ms（首 token 延迟，流式时填写、否则 null）、turn（当轮对话序号）。
 - **工人对进度**：工具 get_colony_status 请求 `GET {ANT_QUEEN_URL}/status?scope=colony`；GitLab 经共享工具与 runtime 配置操作。
 
 ### 9. 目录与 Volume
@@ -90,11 +95,13 @@ ants/
 - **ants.runtime.models**：AgentConfig、PromptProfile、EnvironmentPolicy 等。
 - **ants.runtime.docker_manager**：DockerSpawner；ensure_volume_dirs、spawn_one、ensure_children；子容器名 ants-<agent_id>，端口 22001。
 - **ants.runtime.status**：StatusAggregator；build、build_recursive_status_tree；从留痕与 Docker 聚合状态。
-- **ants.runtime.traces**：ensure_trace_dirs、write_log、list_recent_jsonl；留痕路径与双写约定。
+- **ants.runtime.traces**：ensure_trace_dirs、write_log（每行带 agent_id）、list_recent_jsonl（大文件尾读 O(limit)）；append_jsonl 使用 UTF-8；留痕路径与双写约定。
+- **ants.runtime.trace_log**：trace_log(event, trace_id=…, **kwargs)；extra 内自动带 ts（ISO UTC）；调用方应传 agent_id。ANTS_TRACE_LOG=1 时向 ants.trace 打一行式事件，供 Grafana 按 trace_id/agent_id/时间查。
 - **ants.runtime.runtime_config**：load_runtime_config、runtime_config_to_env、get_llm_api_key（token_ref）。
+- **ants.runtime.db**：可选 MySQL 双写；无库时自动建库（utf8mb4）、建表（utf8mb4）；write_trace 时 payload 内注入 agent_id，JSON 使用 UTF-8。
 - **ants.agents.server**：工人 HTTP；POST /aip、GET /status；后台 bootstrap 热加载工具。
 - **ants.agents.bootstrap**：加载配置、扫描 /shared/tools、心跳与热加载循环。
-- **ants.agents.runner**：加载上下文、调用 LLM 与工具、正式环境校验、压缩过长上下文、写对话与 trace。
+- **ants.agents.runner**：加载上下文、调用 LLM 与工具（打 trace_log llm_call/tool_call 带 agent_id）、正式环境校验、压缩过长上下文、写对话与 trace（conversation 行带 agent_id）。
 - **ants.protocol**：aip（AIPMessage、AIPAction、build_message 等）、status（SingleAntStatus、ColonyStatusDocument 等）、**send**（SendParams、send_aip、async_send_aip）；__version__ = "1.0"。
 
 ### 11. 数据流
@@ -112,6 +119,10 @@ ants/
 | 建员 | ANTS_HOST_PROJECT_ROOT, ANTS_IMAGE, ANTS_NETWORK, ANTS_AUTO_SPAWN_DEFAULT | Docker 与自动建员 |
 | 鉴权 | ANT_ADMIN_TOKEN / ANTS_ADMIN_TOKEN | 内部接口 X-Admin-Token |
 | AIP 发送 | AIP_SEND_TIMEOUT, AIP_SEND_MAX_RETRIES | 可选；发送超时与重试次数 |
+| AIP 协议日志 | AIP_PROTOCOL_LOG, ANTS_PROTOCOL_LOG | 可选；设为 1/true/yes 开启 protocol send 的 INFO 日志，便于按 trace_id 查链路 |
+| 跟踪日志 | ANTS_TRACE_LOG | 可选；设为 1/true/yes 开启 ants.trace 结构化日志（user_instruction、delegate、assign_task、run_task_start/run_task_done 等），每行含 trace_id、agent_id、ts（ISO），便于 Grafana 按链路/角色/时间查 |
+| 状态 | ANTS_STATUS_CACHE_TTL_SEC | 可选；colony status 缓存 TTL（秒），默认 5，0 禁用 |
+| 拆解 | ANTS_DECOMPOSE_LLM_TIMEOUT | 可选；指令拆解 LLM 调用超时（秒），默认 60 |
 
 runtime.yaml 通过 runtime_config_to_env 注入 LLM_*、GITLAB_*、MYSQL_* 等；token_ref 与 llm.api_keys 见 §7/§10。
 
