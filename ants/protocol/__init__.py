@@ -3,6 +3,7 @@
 __version__ = "1.0"
 
 from ants.protocol.aip import AIPAck, AIPAction, AIPMessage, AIPPriority, AIPStatus, ApprovalState, RouteScope, build_message
+from ants.protocol.send import SendParams, async_send_aip, send_aip
 from ants.protocol.status import (
     ColonyStatusDocument,
     RecursiveStatusNode,
@@ -16,6 +17,9 @@ __all__ = [
     "__version__",
     "AIPAction",
     "AIPMessage",
+    "SendParams",
+    "send_aip",
+    "async_send_aip",
     "AIPAck",
     "AIPPriority",
     "AIPStatus",

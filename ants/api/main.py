@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ants.protocol.aip import AIPAction, AIPMessage, AIPStatus
+from ants.protocol.send import SendParams, async_send_aip
 from ants.protocol.status import StatusScope
 from ants.runtime.config import (
     get_config_dir,
@@ -115,8 +116,27 @@ async def status(
 
 # ---------- Interface 2: Container-to-container conversation (AIP); supports cross-server ----------
 
+def _aip_send_params() -> SendParams:
+    """AIP send params: timeout/retries from env or defaults for global reliability."""
+    timeout = 30.0
+    try:
+        t = os.getenv("AIP_SEND_TIMEOUT")
+        if t:
+            timeout = float(t)
+    except ValueError:
+        pass
+    max_retries = 4
+    try:
+        r = os.getenv("AIP_SEND_MAX_RETRIES")
+        if r:
+            max_retries = int(r)
+    except ValueError:
+        pass
+    return SendParams(timeout=timeout, max_retries=max_retries)
+
+
 async def _forward_aip(msg: AIPMessage, target_agent_id: str, visible_agents: list[AgentConfig]) -> dict:
-    """Forward AIP to local worker or remote (to_base_url)."""
+    """Forward AIP to local worker or remote (to_base_url). Uses protocol async_send_aip with retry/backoff."""
     target_cfg = next((a for a in visible_agents if a.agent_id == target_agent_id), None)
     base_url = None
     if msg.to_base_url:
@@ -126,10 +146,7 @@ async def _forward_aip(msg: AIPMessage, target_agent_id: str, visible_agents: li
     if not base_url:
         base_url = f"http://ants-{target_agent_id}:{WORKER_SERVICE_PORT}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(f"{base_url}/aip", json=msg.to_wire())
-            r.raise_for_status()
-            return r.json()
+        return await async_send_aip(base_url, msg.to_wire(), params=_aip_send_params())
     except Exception as e:
         raise HTTPException(503, f"Ant {target_agent_id} unreachable: {e}") from e
 

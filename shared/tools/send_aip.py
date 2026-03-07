@@ -38,11 +38,9 @@ def run(
         "payload": payload or {},
     }
     try:
-        import httpx
-        with httpx.Client(timeout=15.0) as client:
-            r = client.post(f"{base}/aip", json=body)
-            r.raise_for_status()
-            data = r.json()
+        from ants.protocol.send import send_aip, SendParams
+        params = SendParams(timeout=30.0, max_retries=4)
+        data = send_aip(base, body, params=params)
         return json.dumps(data, ensure_ascii=False)
     except Exception as e:
         return f"Error sending AIP: {e}"
