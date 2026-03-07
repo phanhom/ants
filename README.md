@@ -31,9 +31,10 @@ From repo root (so `PWD` is set for spawn volume binds):
 export PWD=$(pwd)
 docker-compose up -d
 # 蚁后 (queen): http://localhost:22000/status , POST /instruction
+# Dashboard: http://localhost:21999 (calls queen for status/instruction; reads traces from MySQL if MYSQL_* set)
 ```
 
-Service name: `queen` (蚁后). Optional: set `ANTS_ADMIN_TOKEN` in `.env` for `/internal/configs` and `POST /internal/spawn`.
+Services: `queen` (蚁后), `dashboard` (standalone SPA + backend; no trace API in Ants—dashboard reads DB itself). Optional: set `ANTS_ADMIN_TOKEN`, `MYSQL_HOST` / `MYSQL_PASSWORD` etc. for dashboard traces.
 
 ## Run 蚁后 (single container)
 

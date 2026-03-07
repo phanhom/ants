@@ -75,3 +75,10 @@ logs/
 # Local overrides (optional)
 docker-compose.override.yml
 *.local.yml
+*.local.yaml
+
+# Dashboard (Node)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env
+dashboard/.env.*

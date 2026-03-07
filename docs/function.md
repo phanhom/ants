@@ -16,12 +16,14 @@ ants/
 ├── configs/agents/    # 员工配置模板（YAML）
 ├── shared/            # 共享 tools、inbox（挂载到各容器）
 ├── volumes/           # 按 agent_id 的留痕目录（宿主机）
+├── dashboard/         # 独立前端（Vite+React）；调蚁后 status/instruction，自连 DB 读 traces
 ├── docker-compose.yml
 ├── Dockerfile
 └── pyproject.toml
 ```
 
 - **对外仅两接口**：(1) **容器间对话** `POST /aip`；(2) **工作信息/状态/进度** `GET /status`。
+- **Dashboard**：与工人无关；`dashboard/` 内 SPA + Node 后端，仅调蚁后 `/status`、`POST /instruction`；留痕数据由 dashboard 后端直连 MySQL 读取（Ants 不暴露 trace 接口）。
 - **蚁后 (queen)**：端口 22000；`GET /status`（聚合）、`POST /aip`（接收并转发/处理）；`POST /instruction` 为便捷入口。
 - **工人**：端口 22001；仅 `POST /aip`、`GET /status`。内部 `/internal/configs`、`POST /internal/spawn` 需 Admin Token。
 

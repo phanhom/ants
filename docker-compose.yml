@@ -1,4 +1,5 @@
 # Ants: 蚁后 (queen) = root container; spawns all workers from configs/agents. User = 老板的上级.
+# Dashboard = separate app; calls queen for status/instruction, reads traces from MySQL itself.
 # For spawn: run from repo root and set PWD, e.g. export PWD=$(pwd); docker-compose up -d
 
 services:
@@ -20,4 +21,22 @@ services:
       - .:/app/host
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["uvicorn", "ants.api.main:app", "--host", "0.0.0.0", "--port", "22000"]
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        VITE_QUEEN_URL: ${VITE_QUEEN_URL:-http://localhost:22000}
+    image: ants-dashboard:latest
+    container_name: ants-dashboard
+    ports:
+      - "21999:3000"
+    environment:
+      PORT: "3000"
+      MYSQL_HOST: ${MYSQL_HOST:-}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-ants}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ants}
     restart: unless-stopped
