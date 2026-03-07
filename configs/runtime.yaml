@@ -9,6 +9,10 @@ llm:
   base_url: "https://api.openai.com/v1"
   model_name: "gpt-4"
   api_key: "${LLM_API_KEY}"
+  # Optional: per-agent keys; agent config token_ref selects one. Default above used when ref missing.
+  # api_keys:
+  #   default: "${LLM_API_KEY}"
+  #   backend: "${LLM_BACKEND_KEY}"
 
 gitlab:
   url: "https://gitlab.example.com"

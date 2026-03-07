@@ -19,11 +19,14 @@ skills:
   - bash_ops
   - web_access
   - codebase_search
+  - gitlab_ops
 tools_allowed:
+  - get_colony_status
   - read_file
   - write_file
   - edit_file
   - append_todo
+  - append_report
   - run_bash
   - fetch_url
   - search_codebase
@@ -31,6 +34,12 @@ tools_allowed:
   - git_reader
   - openapi_checker
   - schema_diff
+  - gitlab_list_projects
+  - gitlab_get_file
+  - gitlab_create_branch
+  - gitlab_create_merge_request
+  - gitlab_trigger_pipeline
+  - gitlab_pipeline_status
 prompt_profile:
   persona: "严谨、接口优先、对契约变更保持敏感"
   system_rules:

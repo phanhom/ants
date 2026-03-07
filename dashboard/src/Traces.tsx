@@ -8,15 +8,23 @@ export default function Traces() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [dbHint, setDbHint] = useState<string | null>(null);
+
   const load = () => {
     setLoading(true);
     setErr(null);
+    setDbHint(null);
     getTraces({
       agent_id: agentId || undefined,
       trace_type: traceType || undefined,
       limit: 100,
     })
-      .then((r) => setEvents(r.events ?? []))
+      .then((r) => {
+        setEvents(r.events ?? []);
+        if (r.db_configured === false || r.message) {
+          setDbHint(r.message || "Database not configured. Set MYSQL_* environment variables for the dashboard backend to see traces.");
+        }
+      })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   };
@@ -53,6 +61,11 @@ export default function Traces() {
         </button>
       </div>
       {err && <p className="text-red-400 text-sm mb-2">{err}</p>}
+      {dbHint && (
+        <p className="mb-4 p-3 rounded bg-amber-900/50 border border-amber-700 text-amber-200 text-sm">
+          {dbHint}
+        </p>
+      )}
       <div className="overflow-x-auto rounded border border-gray-700">
         <table className="w-full text-sm">
           <thead>

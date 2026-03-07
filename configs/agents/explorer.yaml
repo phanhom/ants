@@ -16,12 +16,14 @@ skills:
   - option_mapping
   - competitive_scan
 tools_allowed:
+  - get_colony_status
   - read_file
   - write_file
   - fetch_url
   - web_search
   - search_codebase
   - send_aip
+  - append_report
   - semantic_search
   - docs_reader
   - research_summarizer

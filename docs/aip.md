@@ -640,6 +640,7 @@ AIP 是 Ants 的唯一正式协作协议。它同时定义两件事：
 
 - 任何可能影响正式环境的消息都应设置 `requires_approval: true`
 - 在 `approval_state=approved` 前不得执行正式环境动作
+- **Runner 硬性拦截**：对 `write_file`、`edit_file`、`run_bash` 等工具，若调用参数带 `target_env=production`（或 `target=production`），且 agent 的 `environment_policy.production_requires_human_approval` 为真，则仅在当前任务 payload 中 `approval_state=approved` 时执行，否则返回 "Blocked: production action requires human approval."
 - `authority_weight` 用于表达组织中的说话权重，不等于强制权限，但可用于路由、排序、审批策略
 
 ---
@@ -686,6 +687,7 @@ AIP 是 Ants 的唯一正式协作协议。它同时定义两件事：
 
 ## 10. 版本与扩展
 
-- 当前协议版本：`1.0`
-- 后续若增加流式模式，应在不破坏现有 JSON 消息语义的前提下扩展
-- 新增动作、状态字段、发现字段时，优先使用可选字段保持向后兼容
+- **当前协议版本**：`1.0`
+- **兼容性承诺**：新增字段均为可选，不破坏现有客户端；实现可依赖 `ants.protocol` 包内 `__version__` 与文档一致。
+- 后续若增加流式模式，应在不破坏现有 JSON 消息语义的前提下扩展。
+- 新增动作、状态字段、发现字段时，优先使用可选字段保持向后兼容。

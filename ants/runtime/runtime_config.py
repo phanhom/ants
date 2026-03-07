@@ -44,6 +44,20 @@ def load_runtime_config() -> dict[str, Any]:
     return _expand_env(raw)
 
 
+def get_llm_api_key(conf: dict[str, Any] | None = None, token_ref: str | None = None) -> str:
+    """
+    Resolve LLM API key by optional token_ref. If conf has llm.api_keys and token_ref is set,
+    return api_keys[token_ref]; else return llm.api_key (default). Uses expanded values from env.
+    """
+    if conf is None:
+        conf = load_runtime_config()
+    llm = conf.get("llm") or {}
+    api_keys = llm.get("api_keys")
+    if isinstance(api_keys, dict) and token_ref and token_ref in api_keys:
+        return str(api_keys.get(token_ref, ""))
+    return str(llm.get("api_key", "") or os.getenv("LLM_API_KEY", ""))
+
+
 def runtime_config_to_env(conf: dict[str, Any], prefix: str = "") -> dict[str, str]:
     """Flatten nested runtime config into env vars (e.g. llm.base_url -> LLM_BASE_URL)."""
     out: dict[str, str] = {}

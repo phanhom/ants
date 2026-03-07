@@ -16,10 +16,12 @@ skills:
   - accessibility_review
   - frontend_delivery
 tools_allowed:
+  - get_colony_status
   - read_file
   - write_file
   - edit_file
   - append_todo
+  - append_report
   - fetch_url
   - search_codebase
   - send_aip

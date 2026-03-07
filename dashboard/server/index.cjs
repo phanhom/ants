@@ -68,14 +68,29 @@ const server = http.createServer(async (req, res) => {
     const traceType = url.searchParams.get("trace_type") || undefined;
     const limit = url.searchParams.get("limit") || "100";
     const since = url.searchParams.get("since") || undefined;
+    const cfg = getMysqlConfig();
+    if (!cfg || !mysql) {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({
+        ok: true,
+        events: [],
+        db_configured: false,
+        message: "MySQL not configured or unreachable. Set MYSQL_HOST and related env for the dashboard backend to see traces.",
+      }));
+      return;
+    }
     try {
       const events = await readTraces(agentId, traceType, limit, since);
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ok: true, events }));
+      res.end(JSON.stringify({ ok: true, events, db_configured: true }));
     } catch (e) {
-      res.statusCode = 500;
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ok: false, error: String(e.message) }));
+      res.end(JSON.stringify({
+        ok: false,
+        events: [],
+        db_configured: false,
+        message: "MySQL not configured or unreachable. " + String(e && e.message),
+      }));
     }
     return;
   }

@@ -30,18 +30,27 @@ skills:
   - delegation
   - web_access
   - codebase_search
+  - gitlab_ops
 tools_allowed:
+  - get_colony_status
   - read_file
   - write_file
   - fetch_url
   - web_search
   - search_codebase
   - send_aip
+  - append_report
   - spawn_subordinate
   - org_graph_reader
   - status_aggregator
   - report_summarizer
   - tool_registry_admin
+  - gitlab_list_projects
+  - gitlab_get_file
+  - gitlab_create_branch
+  - gitlab_create_merge_request
+  - gitlab_trigger_pipeline
+  - gitlab_pipeline_status
 prompt_profile:
   persona: "权威、清晰、偏战略和架构，负责定方向和拍板"
   system_rules:

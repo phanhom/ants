@@ -31,4 +31,11 @@ def run(title: str, status: str = "pending") -> str:
     row = {"ts": ts, "title": title, "status": status}
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    agent_id = os.getenv("ANT_AGENT_ID")
+    if agent_id:
+        try:
+            from ants.runtime.db import write_trace
+            write_trace(agent_id, "todo", row)
+        except Exception:
+            pass
     return f"Todo added: {title} ({status})"

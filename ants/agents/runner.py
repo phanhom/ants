@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ants.runtime.config import load_agent_config
-from ants.runtime.runtime_config import load_runtime_config
+from ants.runtime.runtime_config import get_llm_api_key, load_runtime_config
 from ants.runtime.traces import (
     ensure_trace_dirs,
     get_agent_base_dir,
@@ -56,16 +56,19 @@ SKILL_DESCRIPTIONS: dict[str, str] = {
     "regression_testing": "Plan and run regression tests",
     "quality_risk_assessment": "Assess quality and release risks",
     "release_checklist": "Manage release checklists and gates",
+    "gitlab_ops": "Understand GitLab repos and develop on GitLab (branches, MRs, pipelines)",
 }
 
 
-def _get_llm_config() -> dict[str, Any]:
+def _get_llm_config(config: Any = None) -> dict[str, Any]:
     conf = load_runtime_config()
     llm = conf.get("llm") or {}
+    token_ref = getattr(config, "token_ref", None) if config is not None else None
+    api_key = get_llm_api_key(conf, token_ref)
     return {
         "base_url": llm.get("base_url", "https://api.openai.com/v1"),
         "model": llm.get("model_name", "gpt-4"),
-        "api_key": llm.get("api_key", os.getenv("LLM_API_KEY", "")),
+        "api_key": api_key,
     }
 
 
@@ -205,12 +208,16 @@ def get_tools_for_agent(config) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return tools_spec, tools_impl
 
 
+PRODUCTION_SENSITIVE_TOOLS = frozenset({"write_file", "edit_file", "run_bash"})
+
+
 def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
     """Run one task: load context, call LLM with tools, persist conversation. Returns summary."""
     config = load_agent_config()
     if config.agent_id != agent_id:
         config = load_agent_config(Path(os.getenv("ANT_CONFIG", "")))
-    llm_cfg = _get_llm_config()
+    production_approved = (task_payload or {}).get("approval_state") == "approved"
+    llm_cfg = _get_llm_config(config)
     if not llm_cfg.get("api_key"):
         return {"ok": False, "error": "LLM API key not configured"}
     tools_spec, tools_impl = get_tools_for_agent(config)
@@ -239,6 +246,21 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
             choice = resp.choices[0] if resp.choices else None
             if not choice:
                 break
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                pt = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", 0)
+                ct = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", 0)
+                tt = getattr(usage, "total_tokens", None) or (pt + ct)
+                try:
+                    write_trace(agent_id, "llm_usage", {
+                        "ts": utc_now_iso(),
+                        "model": llm_cfg.get("model", ""),
+                        "prompt_tokens": pt,
+                        "completion_tokens": ct,
+                        "total_tokens": tt,
+                    })
+                except Exception:
+                    pass
             msg = choice.message
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
             if getattr(msg, "tool_calls", None):
@@ -256,8 +278,17 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
                 except json.JSONDecodeError:
                     args = {}
-                fn = tools_impl.get(name)
-                result = f"Error: unknown tool {name}" if not fn else str(fn(**args))
+                is_production = (args.get("target_env") == "production" or args.get("target") == "production")
+                if (
+                    name in PRODUCTION_SENSITIVE_TOOLS
+                    and is_production
+                    and config.environment_policy.production_requires_human_approval
+                    and not production_approved
+                ):
+                    result = "Blocked: production action requires human approval."
+                else:
+                    fn = tools_impl.get(name)
+                    result = f"Error: unknown tool {name}" if not fn else str(fn(**args))
                 messages.append({
                     "role": "tool",
                     "tool_call_id": getattr(tc, "id", ""),

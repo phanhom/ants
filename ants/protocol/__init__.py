@@ -1,5 +1,7 @@
 """AIP: Ants Interaction Protocol models and helpers."""
 
+__version__ = "1.0"
+
 from ants.protocol.aip import AIPAck, AIPAction, AIPMessage, AIPPriority, AIPStatus, ApprovalState, RouteScope, build_message
 from ants.protocol.status import (
     ColonyStatusDocument,
@@ -11,6 +13,7 @@ from ants.protocol.status import (
 )
 
 __all__ = [
+    "__version__",
     "AIPAction",
     "AIPMessage",
     "AIPAck",

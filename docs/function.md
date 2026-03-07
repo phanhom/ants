@@ -124,6 +124,12 @@ ants/
   - `ants.protocol.aip`：`AIPStatus`、`AIPPriority`、`RouteScope`、`ApprovalState`、`AIPAction`、`AIPMessage`、`AIPAck`、`build_message()`。
   - `ants.protocol.status`：`StatusScope`、`StatusEndpoints`、`WorkStatusSnapshot`、`SingleAntStatus`、`RecursiveStatusNode`、`ColonyStatusDocument`。
 
+### 2.10 留痕与数据库分工、Token、对进度与 GitLab
+
+- **文件库与数据库**：文件库供工人构建上下文、不遗失对话与留痕；凡写入文件库的留痕（对话、AIP、todos、reports 等）均**双写**至 DB，便于查询、报表与审计。**LLM token 使用量**仅写 DB（不写文件库），在 runner 每轮 chat completion 返回后通过 `write_trace(agent_id, "llm_usage", payload)` 落库。
+- **工人对进度**：工人通过共享工具 `get_colony_status` 请求 `GET {ANT_QUEEN_URL}/status?scope=colony` 获取全巢状态（各 ant 的 pending_todos、last_seen、work 等），实现与同伴对进度；亦可经 AIP submit_report 上报进度。
+- **GitLab**：通过 `configs/runtime.yaml` 的 `gitlab.url`、`gitlab.token` 注入为 `GITLAB_URL`、`GITLAB_TOKEN`。共享工具（如 `gitlab_list_projects`、`gitlab_get_file`、`gitlab_create_branch`、`gitlab_create_merge_request`、`gitlab_trigger_pipeline`、`gitlab_pipeline_status`）使用 GitLab REST API v4 操作项目、文件、分支、MR、流水线；在 backend、creator_decider 等岗位的 `tools_allowed` 与 `skills`（如 `gitlab_ops`）中配置。
+
 ---
 
 ## 3. 数据流摘要
@@ -176,6 +182,7 @@ ants/
 - **文件**：`configs/runtime.yaml`（路径可由 `ANTS_RUNTIME_CONFIG` 覆盖）。
 - **内容**：llm、gitlab、mysql（默认不含 redis；工人若需可自建）；敏感值用 `${VAR}` 占位，由 env 注入。
 - **工人**：建员时通过 `runtime_config_to_env(load_runtime_config())` 扁平化后注入容器 env（如 `LLM_BASE_URL`、`GITLAB_URL`）。
+- **每人 Token（token_ref）**：agent 配置中可设 `token_ref`；若 runtime 的 `llm.api_keys` 中存在该 ref，runner 调用 LLM 时使用对应 key，否则使用 `llm.api_key`（default）。用于按人/按岗独立 API Key 或配额。
 
 ---
 

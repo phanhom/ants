@@ -16,10 +16,12 @@ skills:
   - product_packaging
   - stakeholder_summary
 tools_allowed:
+  - get_colony_status
   - read_file
   - fetch_url
   - search_codebase
   - send_aip
+  - append_report
   - market_notes_reader
   - pricing_canvas
   - summary_writer

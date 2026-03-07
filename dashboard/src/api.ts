@@ -18,7 +18,12 @@ export async function postInstruction(instruction: string, taskId?: string): Pro
   return r.json();
 }
 
-export async function getTraces(params: { agent_id?: string; trace_type?: string; limit?: number; since?: string }): Promise<{ ok: boolean; events: TraceEvent[] }> {
+export async function getTraces(params: { agent_id?: string; trace_type?: string; limit?: number; since?: string }): Promise<{
+  ok: boolean;
+  events: TraceEvent[];
+  db_configured?: boolean;
+  message?: string;
+}> {
   const q = new URLSearchParams();
   if (params.agent_id) q.set("agent_id", params.agent_id);
   if (params.trace_type) q.set("trace_type", params.trace_type);
