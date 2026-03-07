@@ -1,0 +1,23 @@
+# Ants: 蚁后 (queen) = root container; spawns all workers from configs/agents. User = 老板的上级.
+# For spawn: run from repo root and set PWD, e.g. export PWD=$(pwd); docker-compose up -d
+
+services:
+  queen:
+    build: .
+    image: ants:latest
+    container_name: ants-queen
+    ports:
+      - "22000:22000"
+    environment:
+      ANTS_HOST_PROJECT_ROOT: ${PWD}
+      ANTS_IMAGE: ants:latest
+      ANTS_NETWORK: ants_default
+      ANTS_AUTO_SPAWN_DEFAULT: "1"
+      ANTS_CONFIG_DIR: /app/configs/agents
+      ANTS_VOLUMES_ROOT: /runtime/volumes
+      ANTS_ADMIN_TOKEN: ${ANTS_ADMIN_TOKEN:-}
+    volumes:
+      - .:/app/host
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["uvicorn", "ants.api.main:app", "--host", "0.0.0.0", "--port", "22000"]
+    restart: unless-stopped

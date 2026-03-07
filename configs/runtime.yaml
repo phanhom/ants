@@ -1,0 +1,24 @@
+# Ants runtime config (default). Loaded by 蚁后 (queen) and injected into workers.
+# Sensitive values: use ${VAR} and set in env. Redis not included; workers may run their own if needed.
+
+# Optional: base URL of the queen API so workers can send AIP (send_aip tool).
+# queen:
+#   base_url: "http://host.docker.internal:22000"
+
+llm:
+  base_url: "https://api.openai.com/v1"
+  model_name: "gpt-4"
+  api_key: "${LLM_API_KEY}"
+
+gitlab:
+  url: "https://gitlab.example.com"
+  token: "${GITLAB_TOKEN}"
+
+mysql:
+  host: "mysql"
+  port: 3306
+  user: "ants"
+  password: "${MYSQL_PASSWORD}"
+  database: "ants"
+
+# Optional: add redis (or other services) here if needed; workers can also run their own Redis.
