@@ -77,6 +77,16 @@ docker run -p 22000:22000 \
 
 Queen will spawn worker containers from config when `ANTS_AUTO_SPAWN_DEFAULT=1` (default).
 
+**Configuration** — **configs/config.yaml** 为字面默认值，不读环境变量。可配置：llm（含 context_length、max_tokens）、gitlab、mysql、ants（auto_spawn_default、admin_token、超时等）。工人访问蚁后的地址由代码固定为 `http://host.docker.internal:22000`。
+
+**配置文件一览**
+
+| 文件 | 用途 |
+|------|------|
+| **configs/config.yaml** | 统一配置：llm、gitlab、mysql、queen、ants（仅业务相关项） |
+| **configs/agents/*.yaml** | 各 Agent 拓扑与能力（creator_decider、backend、frontend_uiux、qa、explorer、bizdev） |
+| **docker-compose.yml** | 服务定义（queen、dashboard、mysql、gitlab） |
+
 ---
 
 ## API surface
@@ -117,6 +127,19 @@ docker-compose up -d
 |-----------|-------|--------|
 | Queen     | 22000 | Status, instruction, AIP. |
 | Dashboard | 21999 | SPA + backend; optional, needs `MYSQL_*` for traces. |
+| MySQL     | 3306  | Optional trace 存储；不设 `MYSQL_HOST` 不连库，整栈照常起。 |
+| GitLab    | 8080→80 | Optional 私有化 GitLab；不设 `GITLAB_URL`/`GITLAB_TOKEN` 不产生依赖。 |
+
+**Optional services（无依赖）**
+
+- **mysql**：用于 trace 双写与 Dashboard 可观测。不设 `MYSQL_HOST` 时 Queen/Dashboard 不连库，仅无 trace 落库与展示。
+- **gitlab**：私有化 GitLab，供 agent 的 `gitlab_*` 工具使用。不设 `GITLAB_URL`/`GITLAB_TOKEN` 时栈照常启动；要用时在 `.env` 中设 `GITLAB_URL=http://gitlab`、`GITLAB_TOKEN=<从 GitLab 创建的 token>`，可选 `GITLAB_ROOT_PASSWORD` 作初始 root 密码。
+
+**DB 选型（当前场景）**
+
+- **MySQL**：多容器写 trace、Dashboard 读、可扩展，与现有 `pymysql`/`mysql2` 一致；compose 内提供可选 `mysql` 服务，不配置也能起。
+- SQLite：零依赖、单文件，但多进程/多容器写同一库需共享 volume 与 WAL，且需改 ants/dashboard 两处；适合单机最小化部署，当前未采用。
+- 结论：保持 **MySQL** 作为可选 trace 存储，compose 内可选起 `mysql`，不产生启动依赖。
 
 **Image**
 
@@ -130,6 +153,9 @@ Default base: `python:3.14-slim`. Override in Dockerfile with `ARG PYTHON_VERSIO
 | `ANTS_CONFIG_DIR` | Agent config directory. |
 | `ANTS_AUTO_SPAWN_DEFAULT` | `1` = spawn all workers at startup. |
 | `ANTS_HOST_PROJECT_ROOT`, `ANTS_IMAGE` | For spawn volume/image. |
+| `MYSQL_HOST` | Optional; set to `mysql` to use in-compose MySQL. |
+| `MYSQL_PASSWORD` | Optional; must match mysql service for trace dual-write. |
+| `GITLAB_URL`, `GITLAB_TOKEN` | Optional; set `GITLAB_URL=http://gitlab` to use in-compose GitLab. |
 | `AIP_SEND_TIMEOUT`, `AIP_SEND_MAX_RETRIES` | Protocol send tuning. |
 | `ANTS_TRACE_LOG`, `ANTS_PROTOCOL_LOG` | Observability. |
 

@@ -26,14 +26,15 @@ from ants.runtime.config import (
 )
 from ants.runtime.docker_manager import DockerSpawner, WORKER_SERVICE_PORT
 from ants.runtime.models import AgentConfig
-from ants.runtime.runtime_config import load_runtime_config, runtime_config_to_env
+from ants.runtime.runtime_config import get_ants_config, load_runtime_config, runtime_config_to_env
 from ants.runtime.status import StatusAggregator, build_recursive_status_tree
 from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import append_aip_message, ensure_trace_dirs, write_log
 
 
 def _admin_token() -> str | None:
-    return os.getenv("ANT_ADMIN_TOKEN") or os.getenv("ANTS_ADMIN_TOKEN")
+    ac = get_ants_config()
+    return (ac.get("admin_token") or "").strip() or None
 
 
 def require_admin(x_admin_token: str | None = Header(None, alias="X-Admin-Token")) -> None:
@@ -61,15 +62,13 @@ async def lifespan(app: FastAPI):
     app.state.visible_agents = load_all_agent_configs(config_dir)
     write_log(root_config.agent_id, "runtime.jsonl", {"event": "queen_started", "port": 22000})
 
-    auto_spawn = os.getenv("ANTS_AUTO_SPAWN_DEFAULT", "1").strip().lower() in ("1", "true", "yes")
+    ac = get_ants_config()
+    auto_spawn = (ac.get("auto_spawn_default") or "1").strip().lower() in ("1", "true", "yes")
     if auto_spawn and root_config.can_spawn_subordinates:
         spawner = DockerSpawner()
         workers = [a for a in app.state.visible_agents if a.agent_id != root_config.agent_id]
         rconf = load_runtime_config()
-        runtime_env = runtime_config_to_env(rconf)
-        queen_url = (rconf.get("queen") or {}).get("base_url") or os.getenv("ANTS_QUEEN_URL")
-        if queen_url:
-            runtime_env["ANT_QUEEN_URL"] = queen_url.rstrip("/")
+        runtime_env = runtime_config_to_env({k: v for k, v in rconf.items() if k != "ants"})
         created = spawner.ensure_children(workers, extra_env=runtime_env)
         write_log(
             root_config.agent_id,
@@ -89,10 +88,11 @@ def _request_base_url(request: Request) -> str:
 
 def _status_cache_ttl_sec() -> float:
     """Colony status cache TTL in seconds. 0 = disabled."""
+    ac = get_ants_config()
+    v = ac.get("status_cache_ttl_sec") or "5"
     try:
-        v = os.getenv("ANTS_STATUS_CACHE_TTL_SEC", "5")
         return float(v)
-    except ValueError:
+    except (ValueError, TypeError):
         return 5.0
 
 
@@ -152,20 +152,21 @@ async def status(
 # ---------- Interface 2: Container-to-container conversation (AIP); supports cross-server ----------
 
 def _aip_send_params() -> SendParams:
-    """AIP send params: timeout/retries from env or defaults for global reliability."""
+    """AIP send params: config.yaml ants.* or env or defaults."""
+    ac = get_ants_config()
     timeout = 30.0
     try:
-        t = os.getenv("AIP_SEND_TIMEOUT")
-        if t:
+        t = ac.get("aip_send_timeout")
+        if t is not None and str(t).strip():
             timeout = float(t)
-    except ValueError:
+    except (ValueError, TypeError):
         pass
     max_retries = 4
     try:
-        r = os.getenv("AIP_SEND_MAX_RETRIES")
-        if r:
+        r = ac.get("aip_send_max_retries")
+        if r is not None and str(r).strip():
             max_retries = int(r)
-    except ValueError:
+    except (ValueError, TypeError):
         pass
     return SendParams(timeout=timeout, max_retries=max_retries)
 
@@ -214,9 +215,10 @@ def _decompose_instruction_sync(instruction: str, workers: list[AgentConfig]) ->
     llm = rconf.get("llm") or {}
     base_url = (llm.get("base_url") or "https://api.openai.com/v1").rstrip("/")
     model = llm.get("model_name") or "gpt-4"
-    api_key = llm.get("api_key") or os.getenv("LLM_API_KEY", "")
+    api_key = llm.get("api_key") or ""
     if not api_key:
         return None
+    max_tokens = int(llm.get("max_tokens") or 4096)
     workers_json = json.dumps(
         [{"agent_id": w.agent_id, "role": w.role, "skills": w.skills[:15]} for w in workers],
         ensure_ascii=False,
@@ -227,11 +229,12 @@ def _decompose_instruction_sync(instruction: str, workers: list[AgentConfig]) ->
         f"Use only agent_id from the workers list. One task per worker at most.\n\n"
         f"User instruction: {instruction}\n\nWorkers: {workers_json}"
     )
+    ac = get_ants_config()
     timeout = 60.0
     try:
-        t = os.getenv("ANTS_DECOMPOSE_LLM_TIMEOUT", "60")
+        t = ac.get("decompose_llm_timeout") or "60"
         timeout = float(t)
-    except ValueError:
+    except (ValueError, TypeError):
         pass
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -244,7 +247,7 @@ def _decompose_instruction_sync(instruction: str, workers: list[AgentConfig]) ->
                         {"role": "system", "content": "You output only a valid JSON array. No markdown, no explanation."},
                         {"role": "user", "content": user_content},
                     ],
-                    "max_tokens": 1500,
+                    "max_tokens": max_tokens,
                 },
             )
             if r.status_code != 200:
@@ -438,7 +441,8 @@ async def internal_spawn(
         raise HTTPException(404, f"No config for agent_id: {body.agent_id}")
     cfg = load_agent_config(path)
     spawner = DockerSpawner()
-    runtime_env = runtime_config_to_env(load_runtime_config())
+    rconf = load_runtime_config()
+    runtime_env = runtime_config_to_env({k: v for k, v in rconf.items() if k != "ants"})
     name = spawner.spawn_one(cfg, extra_env=runtime_env)
     if name is None:
         raise HTTPException(503, "Docker unavailable or spawn failed")

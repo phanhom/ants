@@ -56,7 +56,7 @@
 ### 7. 测试/正式环境与运行时配置
 
 - **环境策略**：默认测试；正式环境动作需人类批准；runner 对 write_file/edit_file/run_bash 在参数带 target_env=production 且无 approval_state=approved 时拒绝执行。
-- **runtime.yaml**：llm、gitlab、mysql（默认不含 Redis）；敏感值 `${VAR}` 由 env 注入；建员时扁平化注入工人。
+- **config.yaml**：llm、gitlab、mysql、queen、ants 等统一配置；敏感值 `${VAR}` 由环境注入；建员时仅 llm/mysql/gitlab/queen 扁平化注入工人。
 - **工人跑容器**：仅蚁后挂载 Docker Socket；工人需起容器时经蚁后代执行（Docker-outside-of-Docker）。
 
 ### 8. 留痕与双存储
@@ -73,7 +73,7 @@
 ```
 ants/
 ├── ants/          # api, agents, protocol, runtime
-├── configs/       # agents/*.yaml, runtime.yaml
+├── configs/       # config.yaml（统一配置：llm/mysql/gitlab/queen/ants/limits/runner）, agents/*.yaml（拓扑与能力）
 ├── shared/       # tools, inbox
 ├── volumes/      # 按 agent_id 的留痕（宿主机）
 ├── dashboard/    # 独立 SPA + 后端；调蚁后，自连 DB 读 traces
@@ -124,7 +124,7 @@ ants/
 | 状态 | ANTS_STATUS_CACHE_TTL_SEC | 可选；colony status 缓存 TTL（秒），默认 5，0 禁用 |
 | 拆解 | ANTS_DECOMPOSE_LLM_TIMEOUT | 可选；指令拆解 LLM 调用超时（秒），默认 60 |
 
-runtime.yaml 通过 runtime_config_to_env 注入 LLM_*、GITLAB_*、MYSQL_* 等；token_ref 与 llm.api_keys 见 §7/§10。
+config.yaml 通过 runtime_config_to_env 将 llm/mysql/gitlab/queen 注入为 LLM_*、MYSQL_*、GITLAB_* 等；token_ref 与 llm.api_keys 见 §7/§10。
 
 ### 13. Docker 与扩展
 

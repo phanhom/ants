@@ -11,9 +11,10 @@ from ants.runtime.models import AgentConfig
 
 
 def get_config_dir() -> Path:
-    """Config dir: env ANTS_CONFIG_DIR, else cwd/configs/agents, else /app/configs/agents."""
-    if os.getenv("ANTS_CONFIG_DIR"):
-        return Path(os.environ["ANTS_CONFIG_DIR"])
+    """Config dir: env ANTS_CONFIG_DIR 或默认 cwd/configs/agents、/app/configs/agents."""
+    path = (os.getenv("ANTS_CONFIG_DIR") or "").strip()
+    if path:
+        return Path(path)
     cwd_agents = Path.cwd() / "configs" / "agents"
     if cwd_agents.is_dir():
         return cwd_agents

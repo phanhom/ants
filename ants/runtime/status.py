@@ -14,7 +14,6 @@ from ants.protocol.status import (
     StatusEndpoints,
     WorkStatusSnapshot,
 )
-from ants.runtime.docker_manager import WORKER_SERVICE_PORT
 from ants.runtime.models import AgentConfig, AgentLifecycle
 from ants.runtime.traces import get_agent_base_dir, list_recent_jsonl
 
@@ -28,6 +27,17 @@ except Exception:  # pragma: no cover - handled at runtime
 
 
 QUEEN_SERVICE_PORT = 22000
+
+
+def _get_status_limits():
+    return {
+        "todos": 100,
+        "reports": 10,
+        "aip": 20,
+        "logs": 50,
+        "worker_todos": 50,
+        "worker_logs": 10,
+    }
 
 
 def _normalize_base_url(base_url: str | None) -> str | None:
@@ -57,7 +67,7 @@ def _resolve_base_url(
     if request_base_url:
         return _normalize_base_url(request_base_url)
     if is_root:
-        return f"http://ants-queen:{QUEEN_SERVICE_PORT}"
+        return f"http://ants-queen:{port}"
     return f"http://ants-{agent.agent_id}:{port}"
 
 
@@ -66,7 +76,7 @@ class StatusAggregator:
 
     def __init__(self, root_config: AgentConfig) -> None:
         self.root_config = root_config
-        env_root = os.getenv("ANTS_VOLUMES_ROOT")
+        env_root = (os.getenv("ANTS_VOLUMES_ROOT") or "").strip()
         self.volumes_root = (
             Path(env_root)
             if env_root
@@ -92,10 +102,11 @@ class StatusAggregator:
 
     def _derive_status(self, agent: AgentConfig, request_base_url: str | None = None) -> SingleAntStatus:
         base = self.volumes_root / agent.agent_id
-        todo_items = list_recent_jsonl(base / "todos" / "items.jsonl", limit=100)
-        report_items = list_recent_jsonl(base / "reports" / "reports.jsonl", limit=10)
-        aip_items = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=20)
-        log_items = list_recent_jsonl(base / "logs" / "runtime.jsonl", limit=50)
+        lim = _get_status_limits()
+        todo_items = list_recent_jsonl(base / "todos" / "items.jsonl", limit=lim["todos"])
+        report_items = list_recent_jsonl(base / "reports" / "reports.jsonl", limit=lim["reports"])
+        aip_items = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=lim["aip"])
+        log_items = list_recent_jsonl(base / "logs" / "runtime.jsonl", limit=lim["logs"])
         container_name, container_state = self._container_state(agent.agent_id)
 
         waiting_for_approval = any(item.get("requires_approval") for item in todo_items) or any(
@@ -114,6 +125,7 @@ class StatusAggregator:
             lifecycle = AgentLifecycle.idle
 
         is_root = agent.agent_id == self.root_config.agent_id
+        from ants.runtime.docker_manager import WORKER_SERVICE_PORT
         port = QUEEN_SERVICE_PORT if is_root else WORKER_SERVICE_PORT
         base_url = _resolve_base_url(
             agent,
@@ -146,6 +158,7 @@ class StatusAggregator:
         topology = {agent.agent_id: agent.subordinates for agent in agents}
         return ColonyStatusDocument(
             root_agent_id=self.root_config.agent_id,
+            port=QUEEN_SERVICE_PORT,
             topology=topology,
             waiting_for_approval=any(agent.waiting_for_approval for agent in statuses),
             ants=statuses,
@@ -174,10 +187,11 @@ def build_worker_self_status(
 ) -> SingleAntStatus:
     """Build this ant's work info and progress from trace dirs (no Docker)."""
     base = get_agent_base_dir(config.agent_id)
-    todos = list_recent_jsonl(base / "todos" / "items.jsonl", limit=50)
-    reports = list_recent_jsonl(base / "reports" / "reports.jsonl", limit=10)
-    recent_aip = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=20)
-    logs = list_recent_jsonl(base / "logs" / "runtime.jsonl", limit=10)
+    lim = _get_status_limits()
+    todos = list_recent_jsonl(base / "todos" / "items.jsonl", limit=lim["worker_todos"])
+    reports = list_recent_jsonl(base / "reports" / "reports.jsonl", limit=lim["reports"])
+    recent_aip = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=lim["aip"])
+    logs = list_recent_jsonl(base / "logs" / "runtime.jsonl", limit=lim["worker_logs"])
     last_seen = logs[-1].get("ts") if logs else None
     pending_todos = sum(1 for t in todos if t.get("status") != "completed")
     base_url = _resolve_base_url(config, port=port, request_base_url=request_base_url)

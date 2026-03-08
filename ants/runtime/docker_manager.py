@@ -25,9 +25,9 @@ class DockerSpawner:
     """Create child ant containers idempotently. Used at startup or by 二把手 dynamically."""
 
     def __init__(self) -> None:
-        self.project_root = Path(os.getenv("ANTS_HOST_PROJECT_ROOT", "")).expanduser()
-        self.image = os.getenv("ANTS_IMAGE", "ants:latest")
-        self.network = os.getenv("ANTS_NETWORK")
+        self.project_root = Path((os.getenv("ANTS_HOST_PROJECT_ROOT") or "").strip()).expanduser()
+        self.image = (os.getenv("ANTS_IMAGE") or "ants:latest").strip()
+        self.network = (os.getenv("ANTS_NETWORK") or "").strip() or None
         self.client = None
         if docker is not None:
             try:
@@ -97,7 +97,7 @@ class DockerSpawner:
         if not (self.project_root / "configs" / "agents" / config_file).exists():
             return None
         volumes = self._volume_binds(child.agent_id, config_file)
-        queen_url = os.getenv("ANTS_QUEEN_URL", "http://host.docker.internal:22000")
+        queen_url = "http://host.docker.internal:22000"
         environment = {
             "ANT_CONFIG": "/app/config/agent.yaml",
             "ANT_AGENT_ID": child.agent_id,

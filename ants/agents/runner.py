@@ -71,21 +71,25 @@ def _get_llm_config(config: Any = None) -> dict[str, Any]:
         "base_url": llm.get("base_url", "https://api.openai.com/v1"),
         "model": llm.get("model_name", "gpt-4"),
         "api_key": api_key,
+        "max_tokens": int(llm.get("max_tokens") or 4096),
+        "context_length": int(llm.get("context_length") or 128000),
     }
 
 
-def load_context(agent_id: str, limit: int = 30) -> list[dict[str, Any]]:
+def load_context(agent_id: str, limit: int | None = None) -> list[dict[str, Any]]:
     """Load recent conversation and AIP context from file store for LLM messages."""
     base = get_agent_base_dir(agent_id)
+    msg_limit = limit if limit is not None else 30
+    aip_limit = 10
     messages: list[dict[str, Any]] = []
-    conv = list_recent_jsonl(base / "conversations" / "messages.jsonl", limit=limit)
+    conv = list_recent_jsonl(base / "conversations" / "messages.jsonl", limit=msg_limit)
     for row in conv:
         role = row.get("role", "user")
         content = row.get("content", "")
         if isinstance(content, dict):
             content = json.dumps(content, ensure_ascii=False)
         messages.append({"role": role, "content": content})
-    aip = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=10)
+    aip = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=aip_limit)
     if aip:
         summary = "Recent AIP: " + json.dumps([r.get("action") for r in aip[-5:]], ensure_ascii=False)
         messages.append({"role": "system", "content": summary})
@@ -115,13 +119,21 @@ def build_system_prompt(config) -> str:
     return "\n".join(parts)
 
 
-MAX_CONTEXT_TOKENS = 28000
-CHARS_PER_TOKEN_EST = 4
+def _llm_context_config():
+    """From config llm.context_length (model context window) and chars_per_token estimate."""
+    try:
+        from ants.runtime.runtime_config import load_runtime_config
+        llm = load_runtime_config().get("llm") or {}
+        ctx = int(llm.get("context_length") or 128000)
+        return ctx, 4  # chars per token approx
+    except Exception:
+        return 128000, 4
 
 
 def _approx_tokens(messages: list[dict[str, Any]]) -> int:
     """Rough token count from serialized message list."""
-    return len(json.dumps(messages, ensure_ascii=False)) // CHARS_PER_TOKEN_EST
+    _, chars_per = _llm_context_config()
+    return len(json.dumps(messages, ensure_ascii=False)) // chars_per
 
 
 def _compress_context(
@@ -130,10 +142,11 @@ def _compress_context(
     llm_cfg: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """
-    If messages exceed MAX_CONTEXT_TOKENS, summarize the middle segment (keep first system and last user)
+    If messages exceed context_length (config), summarize the middle segment (keep first system and last user)
     into a single 'Previous context summary' system message and append summary to conversations/summaries.jsonl.
     """
-    if _approx_tokens(messages) <= MAX_CONTEXT_TOKENS:
+    max_tokens, _ = _llm_context_config()
+    if _approx_tokens(messages) <= max_tokens:
         return messages
     if len(messages) <= 2:
         return messages
@@ -246,7 +259,11 @@ def run_task(agent_id: str, task_payload: dict[str, Any]) -> dict[str, Any]:
         max_rounds = 10
         while max_rounds > 0:
             max_rounds -= 1
-            kwargs: dict[str, Any] = {"model": llm_cfg["model"], "messages": messages}
+            kwargs: dict[str, Any] = {
+                "model": llm_cfg["model"],
+                "messages": messages,
+                "max_tokens": llm_cfg.get("max_tokens", 4096),
+            }
             if tools_spec:
                 kwargs["tools"] = tools_spec
                 kwargs["tool_choice"] = "auto"

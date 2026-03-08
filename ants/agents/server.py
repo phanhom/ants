@@ -14,7 +14,7 @@ from ants.runtime.status import build_worker_self_status, build_worker_subtree_s
 from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import append_aip_message, ensure_trace_dirs, write_log
 
-WORKER_PORT = int(os.getenv("ANT_SERVICE_PORT", "22001"))
+WORKER_PORT = 22001
 
 app = FastAPI(title="Ants Worker", version="0.1.0")
 

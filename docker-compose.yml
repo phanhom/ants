@@ -1,6 +1,9 @@
 # Ants: 蚁后 (queen) = root container; spawns all workers from configs/agents. User = 老板的上级.
 # Dashboard = separate app; calls queen for status/instruction, reads traces from MySQL itself.
 # For spawn: run from repo root and set PWD, e.g. export PWD=$(pwd); docker-compose up -d
+#
+# 统一配置：configs/config.yaml（敏感值用 ${VAR}，由环境或 compose 下方 environment 注入）。
+# Optional services (no depends_on): mysql, gitlab；不配也能起。
 
 services:
   queen:
@@ -10,6 +13,7 @@ services:
     ports:
       - "22000:22000"
     environment:
+      PWD: ${PWD}
       ANTS_HOST_PROJECT_ROOT: ${PWD}
       ANTS_IMAGE: ants:latest
       ANTS_NETWORK: ants_default
@@ -17,6 +21,12 @@ services:
       ANTS_CONFIG_DIR: /app/configs/agents
       ANTS_VOLUMES_ROOT: /runtime/volumes
       ANTS_ADMIN_TOKEN: ${ANTS_ADMIN_TOKEN:-}
+      # Optional: 仅当需要时在 .env 中配置，不配不产生依赖
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      MYSQL_HOST: ${MYSQL_HOST:-}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      GITLAB_URL: ${GITLAB_URL:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
     volumes:
       - .:/app/host
       - /var/run/docker.sock:/var/run/docker.sock
@@ -40,3 +50,45 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-ants}
     restart: unless-stopped
+
+  # Optional: trace 存储。不设 MYSQL_HOST 时 Dashboard/Queen 不连库，整栈仍可启动。
+  mysql:
+    image: mysql:8.0
+    container_name: ants-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-antsroot}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ants}
+      MYSQL_USER: ${MYSQL_USER:-ants}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+
+  # Optional: 私有化 GitLab，供 agent 的 gitlab_* 工具用。不设 GITLAB_URL/GITLAB_TOKEN 不产生依赖。
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: ants-gitlab
+    hostname: gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        nginx['listen_port'] = 80
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-changeme}'
+        puma['worker_processes'] = 2
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    shm_size: "256m"
+
+volumes:
+  mysql_data:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:

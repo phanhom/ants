@@ -30,7 +30,7 @@ def get_agent_base_dir(agent_id: str) -> Path:
     explicit = os.getenv("ANT_BASE_DIR")
     if explicit:
         return Path(explicit)
-    env_root = os.getenv("ANTS_VOLUMES_ROOT")
+    env_root = (os.getenv("ANTS_VOLUMES_ROOT") or "").strip()
     if env_root:
         return Path(env_root) / agent_id
     # Local run: use cwd/volumes or /tmp/ants_volumes
@@ -62,7 +62,7 @@ def write_log(agent_id: str, filename: str, payload: dict[str, Any]) -> None:
     append_jsonl(base / "logs" / filename, payload)
 
 
-# Threshold: below this, read whole file; above, use tail-read for O(limit) memory/time.
+_LIST_RECENT_JSONL_DEFAULT_LIMIT = 20
 _LIST_RECENT_JSONL_SMALL_FILE_THRESHOLD = 64 * 1024  # 64 KiB
 
 
@@ -110,8 +110,10 @@ def _read_tail_lines(file_path: Path, limit: int) -> list[str]:
         return lines_collected[-limit:] if len(lines_collected) > limit else lines_collected
 
 
-def list_recent_jsonl(file_path: Path, limit: int = 20) -> list[dict[str, Any]]:
+def list_recent_jsonl(file_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     """Read the last N JSONL rows from a trace file. O(limit) for large files."""
+    if limit is None:
+        limit = _LIST_RECENT_JSONL_DEFAULT_LIMIT
     if not file_path.exists():
         return []
     try:
