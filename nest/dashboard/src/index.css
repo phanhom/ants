@@ -1,0 +1,78 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #f8fafc; /* very light gray, almost white */
+    --foreground: #0f172a; /* dark slate text */
+    --surface: #ffffff; /* pure white surface */
+    --surface-hover: #f1f5f9;
+    --border: #e2e8f0;
+    --accent: #000000;
+    --accent-foreground: #ffffff;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+  }
+
+  .dark {
+    --background: #09090b; /* very dark, neutral black */
+    --foreground: #fafafa;
+    --surface: #121214;
+    --surface-hover: #1f1f22;
+    --border: #27272a;
+    --accent: #ffffff;
+    --accent-foreground: #000000;
+    --muted: #1f1f22;
+    --muted-foreground: #a1a1aa;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    margin: 0;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+}
+
+@layer components {
+  /* Flat, clean card style, no gradients, no shadows or blur unless absolutely needed */
+  .glass-card {
+    @apply rounded-lg border border-border bg-surface;
+  }
+
+  .glass-card-raised {
+    @apply rounded-lg border border-border bg-surface shadow-sm;
+  }
+
+  .metric-value {
+    @apply text-3xl font-medium tracking-tight text-foreground;
+  }
+
+  .section-title {
+    @apply text-xs font-semibold tracking-wide text-muted-foreground uppercase;
+  }
+}

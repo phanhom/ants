@@ -1,74 +1,137 @@
-# Ants: 蚁后 (queen) = root container; spawns all workers from configs/agents. User = 老板的上级.
-# Dashboard = separate app; calls queen for status/instruction, reads traces from MySQL itself.
-# For spawn: run from repo root and set PWD, e.g. export PWD=$(pwd); docker-compose up -d
+# Nest + Ants: zero-config multi-agent platform.
+# `docker compose up -d` builds and starts core services.
+# `docker compose --profile full up -d` to include GitLab.
 #
-# 统一配置：configs/config.yaml（敏感值用 ${VAR}，由环境或 compose 下方 environment 注入）。
-# Optional services (no depends_on): mysql, gitlab；不配也能起。
+# Port allocation (22000 series):
+#   22000  Nest API (management platform)
+#   22002  Dashboard (SPA + backend)
+#   22003  MinIO API (S3-compatible)
+#   22004  MinIO Console
+#   22005  MySQL
+#   22006  GitLab HTTP (profile: full)
+#   22100  Queen agent (creator_decider)
+#   22101  Workers (internal, assigned by DockerSpawner)
 
 services:
-  queen:
-    build: .
-    image: ants:latest
-    container_name: ants-queen
+  # ── Nest: Management Platform ──────────────────────────────────────
+  nest:
+    build:
+      context: ./nest
+      dockerfile: Dockerfile
+    container_name: nest
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
       - "22000:22000"
     environment:
-      PWD: ${PWD}
-      ANTS_HOST_PROJECT_ROOT: ${PWD}
-      ANTS_IMAGE: ants:latest
-      ANTS_NETWORK: ants_default
-      ANTS_AUTO_SPAWN_DEFAULT: "1"
-      ANTS_CONFIG_DIR: /app/configs/agents
-      ANTS_VOLUMES_ROOT: /runtime/volumes
-      ANTS_ADMIN_TOKEN: ${ANTS_ADMIN_TOKEN:-}
-      # Optional: 仅当需要时在 .env 中配置，不配不产生依赖
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      MYSQL_HOST: ${MYSQL_HOST:-}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
-      GITLAB_URL: ${GITLAB_URL:-}
-      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: ants
+      MYSQL_PASSWORD: changeme
+      MYSQL_DATABASE: ants
     volumes:
-      - .:/app/host
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: ["uvicorn", "ants.api.main:app", "--host", "0.0.0.0", "--port", "22000"]
+      - ./nest/configs:/app/configs:ro
+    command: ["uvicorn", "nest.api:app", "--host", "0.0.0.0", "--port", "22000"]
     restart: unless-stopped
 
   dashboard:
     build:
-      context: ./dashboard
+      context: ./nest/dashboard
+      dockerfile: Dockerfile
       args:
-        VITE_QUEEN_URL: ${VITE_QUEEN_URL:-http://localhost:22000}
-    image: ants-dashboard:latest
+        VITE_NEST_URL: http://localhost:22000
     container_name: ants-dashboard
+    depends_on:
+      nest:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
     ports:
-      - "21999:3000"
+      - "22002:3000"
     environment:
       PORT: "3000"
-      MYSQL_HOST: ${MYSQL_HOST:-}
-      MYSQL_PORT: ${MYSQL_PORT:-3306}
-      MYSQL_USER: ${MYSQL_USER:-ants}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ants}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: ants
+      MYSQL_PASSWORD: changeme
+      MYSQL_DATABASE: ants
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: ants
+      MINIO_SECRET_KEY: antspassword
     restart: unless-stopped
 
-  # Optional: trace 存储。不设 MYSQL_HOST 时 Dashboard/Queen 不连库，整栈仍可启动。
+  # ── Ants: Talent Market (Queen + Workers) ──────────────────────────
+  queen:
+    build:
+      context: ./ants
+      dockerfile: Dockerfile
+    container_name: ants-queen
+    depends_on:
+      nest:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    ports:
+      - "22100:22100"
+    environment:
+      ANTS_HOST_PROJECT_ROOT: ${PWD}/ants
+      ANTS_IMAGE: ants-queen
+      ANTS_NETWORK: ants_default
+      ANTS_CONFIG_DIR: /app/configs/agents
+      ANTS_VOLUMES_ROOT: /app/data/volumes
+      ANTS_RUNTIME_CONFIG: /app/configs/config.json
+      NEST_URL: http://nest:22000
+      NEST_SECRET: ""
+    volumes:
+      - ./ants:/app/host
+      - ./ants/configs:/app/configs:ro
+      - ./data/volumes:/app/data/volumes
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["uvicorn", "ants.queen.api:app", "--host", "0.0.0.0", "--port", "22100"]
+    restart: unless-stopped
+
+  # ── Infrastructure ─────────────────────────────────────────────────
   mysql:
     image: mysql:8.0
     container_name: ants-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-antsroot}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-ants}
-      MYSQL_USER: ${MYSQL_USER:-ants}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+      MYSQL_ROOT_PASSWORD: antsroot
+      MYSQL_DATABASE: ants
+      MYSQL_USER: ants
+      MYSQL_PASSWORD: changeme
     volumes:
-      - mysql_data:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "22005:3306"
     restart: unless-stopped
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uants", "-pchangeme"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
 
-  # Optional: 私有化 GitLab，供 agent 的 gitlab_* 工具用。不设 GITLAB_URL/GITLAB_TOKEN 不产生依赖。
+  minio:
+    image: minio/minio
+    container_name: ants-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "22003:9000"
+      - "22004:9001"
+    environment:
+      MINIO_ROOT_USER: ants
+      MINIO_ROOT_PASSWORD: antspassword
+    volumes:
+      - ./data/minio:/data
+    restart: unless-stopped
+
   gitlab:
+    profiles: ["full"]
     image: gitlab/gitlab-ce:latest
     container_name: ants-gitlab
     hostname: gitlab
@@ -76,19 +139,13 @@ services:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://gitlab'
         nginx['listen_port'] = 80
-        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-changeme}'
+        gitlab_rails['initial_root_password'] = 'changeme'
         puma['worker_processes'] = 2
     volumes:
-      - gitlab_config:/etc/gitlab
-      - gitlab_logs:/var/log/gitlab
-      - gitlab_data:/var/opt/gitlab
+      - ./data/gitlab/config:/etc/gitlab
+      - ./data/gitlab/logs:/var/log/gitlab
+      - ./data/gitlab/data:/var/opt/gitlab
     ports:
-      - "8080:80"
+      - "22006:80"
     restart: unless-stopped
     shm_size: "256m"
-
-volumes:
-  mysql_data:
-  gitlab_config:
-  gitlab_logs:
-  gitlab_data:

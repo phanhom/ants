@@ -40,12 +40,11 @@ env/
 *.pem
 secrets/
 
-# Ants runtime data (volumes are bind-mounted from host)
-volumes/
+# Runtime data (bind-mounted, persistent storage)
+data/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb_checkpoints
 
 # Testing / coverage
 .pytest_cache/
@@ -68,17 +67,25 @@ dmypy.json
 .DS_Store
 Thumbs.db
 
-# Logs (if any written in repo root)
+# Logs
 *.log
 logs/
 
-# Local overrides (optional)
+# Local overrides
 docker-compose.override.yml
 *.local.yml
 *.local.yaml
 
-# Dashboard (Node)
+# Dashboard (Nest)
+nest/dashboard/node_modules/
+nest/dashboard/dist/
+nest/dashboard/.env
+nest/dashboard/.env.*
+
+# Legacy dashboard path (in case any remain)
 dashboard/node_modules/
 dashboard/dist/
-dashboard/.env
-dashboard/.env.*
+
+# Ants shared volumes (host-side created by DockerSpawner)
+ants/volumes/
+ants/shared/inbox/

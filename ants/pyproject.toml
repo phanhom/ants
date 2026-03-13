@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ants"
+version = "0.1.0"
+description = "Ants — Talent Market: agent teams with AIP protocol, Docker spawning, and LLM tools."
+requires-python = ">=3.12"
+dependencies = [
+    "aip-protocol @ git+https://github.com/phanhom/aip.git@v1.3.0#subdirectory=sdk-python",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.28",
+    "docker>=7.1",
+    "tenacity>=9.0",
+    "openai>=1.55",
+    "pymysql>=1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+search = [
+    "duckduckgo-search>=6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ants*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
