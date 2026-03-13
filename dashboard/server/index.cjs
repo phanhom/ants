@@ -36,7 +36,7 @@ async function queryDb(sql, params) {
   if (!cfg || !mysql) return null;
   const conn = await mysql.createConnection(cfg);
   try {
-    const [rows] = await conn.execute(sql, params);
+    const [rows] = await conn.query(sql, params);
     return rows;
   } finally {
     await conn.end();

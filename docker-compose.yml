@@ -1,6 +1,6 @@
 # Ants: zero-config multi-agent system.
-# All inter-service credentials are hardcoded — just `docker compose up -d`.
-# Only LLM_API_KEY needs to be set externally (in configs/config.json or as env override).
+# `docker compose up -d` builds and starts all core services.
+# Optional: `docker compose --profile full up -d` to include GitLab.
 #
 # Port allocation (22000 series):
 #   22000  Queen API
@@ -9,25 +9,23 @@
 #   22003  MinIO API (S3-compatible)
 #   22004  MinIO Console
 #   22005  MySQL
-#   22006  GitLab HTTP
-#
-# Data layout (all under ./data/, gitignored):
-#   data/volumes/    Per-agent traces, logs, workspace
-#   data/mysql/      MySQL data files
-#   data/minio/      MinIO object storage (artifacts)
-#   data/gitlab/     GitLab config + data + logs
+#   22006  GitLab HTTP (profile: full)
 
 services:
   queen:
-    build: .
-    image: ants:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: ants-queen
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
       - "22000:22000"
     environment:
       PWD: ${PWD}
       ANTS_HOST_PROJECT_ROOT: ${PWD}
-      ANTS_IMAGE: ants:latest
+      ANTS_IMAGE: ants-queen
       ANTS_NETWORK: ants_default
       ANTS_AUTO_SPAWN_DEFAULT: "1"
       ANTS_CONFIG_DIR: /app/configs/agents
@@ -48,10 +46,17 @@ services:
   dashboard:
     build:
       context: ./dashboard
+      dockerfile: Dockerfile
       args:
         VITE_QUEEN_URL: http://localhost:22000
-    image: ants-dashboard:latest
     container_name: ants-dashboard
+    depends_on:
+      queen:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
     ports:
       - "22002:3000"
     environment:
@@ -81,6 +86,12 @@ services:
       - "22005:3306"
     restart: unless-stopped
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uants", "-pchangeme"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
 
   minio:
     image: minio/minio
@@ -97,6 +108,7 @@ services:
     restart: unless-stopped
 
   gitlab:
+    profiles: ["full"]
     image: gitlab/gitlab-ce:latest
     container_name: ants-gitlab
     hostname: gitlab

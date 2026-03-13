@@ -55,6 +55,11 @@ async def lifespan(app: FastAPI):
         )
     root_config = load_agent_config(root_path)
     ensure_trace_dirs(root_config.agent_id)
+
+    from ants.runtime.db import init_db
+    init_db()
+    write_log(root_config.agent_id, "runtime.jsonl", {"event": "db_ready"})
+
     app.state.root_config = root_config
     app.state.config_dir = config_dir
     app.state.visible_agents = load_all_agent_configs(config_dir)

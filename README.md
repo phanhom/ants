@@ -1,3 +1,4 @@
+适配openclaw
 # Ants
 
 **Multi-agent collaboration over AIP.** Each agent runs as a container; the queen decomposes user instructions and dispatches work via the Ants Interaction Protocol. Two surfaces: `POST /aip` and `GET /status`.
