@@ -1,57 +1,49 @@
-# Ants: zero-config multi-agent system.
-# `docker compose up -d` builds and starts all core services.
-# Optional: `docker compose --profile full up -d` to include GitLab.
+# Nest + Ants: zero-config multi-agent platform.
+# `docker compose up -d` builds and starts core services.
+# `docker compose --profile full up -d` to include GitLab.
 #
 # Port allocation (22000 series):
-#   22000  Queen API
-#   22001  Workers (internal, assigned by DockerSpawner)
+#   22000  Nest API (management platform)
 #   22002  Dashboard (SPA + backend)
 #   22003  MinIO API (S3-compatible)
 #   22004  MinIO Console
 #   22005  MySQL
 #   22006  GitLab HTTP (profile: full)
+#   22100  Queen agent (creator_decider)
+#   22101  Workers (internal, assigned by DockerSpawner)
 
 services:
-  queen:
+  # ── Nest: Management Platform ──────────────────────────────────────
+  nest:
     build:
-      context: .
+      context: ./nest
       dockerfile: Dockerfile
-    container_name: ants-queen
+    container_name: nest
     depends_on:
       mysql:
         condition: service_healthy
     ports:
       - "22000:22000"
     environment:
-      PWD: ${PWD}
-      ANTS_HOST_PROJECT_ROOT: ${PWD}
-      ANTS_IMAGE: ants-queen
-      ANTS_NETWORK: ants_default
-      ANTS_AUTO_SPAWN_DEFAULT: "1"
-      ANTS_CONFIG_DIR: /app/configs/agents
-      ANTS_VOLUMES_ROOT: /app/data/volumes
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_USER: ants
       MYSQL_PASSWORD: changeme
       MYSQL_DATABASE: ants
     volumes:
-      - .:/app/host
-      - ./configs:/app/configs:ro
-      - ./data/volumes:/app/data/volumes
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: ["uvicorn", "ants.api.main:app", "--host", "0.0.0.0", "--port", "22000"]
+      - ./nest/configs:/app/configs:ro
+    command: ["uvicorn", "nest.api:app", "--host", "0.0.0.0", "--port", "22000"]
     restart: unless-stopped
 
   dashboard:
     build:
-      context: ./dashboard
+      context: ./nest/dashboard
       dockerfile: Dockerfile
       args:
-        VITE_QUEEN_URL: http://localhost:22000
+        VITE_NEST_URL: http://localhost:22000
     container_name: ants-dashboard
     depends_on:
-      queen:
+      nest:
         condition: service_started
       mysql:
         condition: service_healthy
@@ -72,6 +64,37 @@ services:
       MINIO_SECRET_KEY: antspassword
     restart: unless-stopped
 
+  # ── Ants: Talent Market (Queen + Workers) ──────────────────────────
+  queen:
+    build:
+      context: ./ants
+      dockerfile: Dockerfile
+    container_name: ants-queen
+    depends_on:
+      nest:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    ports:
+      - "22100:22100"
+    environment:
+      ANTS_HOST_PROJECT_ROOT: ${PWD}/ants
+      ANTS_IMAGE: ants-queen
+      ANTS_NETWORK: ants_default
+      ANTS_CONFIG_DIR: /app/configs/agents
+      ANTS_VOLUMES_ROOT: /app/data/volumes
+      ANTS_RUNTIME_CONFIG: /app/configs/config.json
+      NEST_URL: http://nest:22000
+      NEST_SECRET: ""
+    volumes:
+      - ./ants:/app/host
+      - ./ants/configs:/app/configs:ro
+      - ./data/volumes:/app/data/volumes
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["uvicorn", "ants.queen.api:app", "--host", "0.0.0.0", "--port", "22100"]
+    restart: unless-stopped
+
+  # ── Infrastructure ─────────────────────────────────────────────────
   mysql:
     image: mysql:8.0
     container_name: ants-mysql

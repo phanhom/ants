@@ -1,4 +1,4 @@
-const QUEEN = (import.meta.env.VITE_QUEEN_URL as string) || "http://localhost:22000";
+const NEST = (import.meta.env.VITE_NEST_URL as string) || "http://localhost:22000";
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -6,7 +6,7 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-// ── Queen API ────────────────────────────────────────────────────────────────
+// ── Nest Platform API ────────────────────────────────────────────────────────
 
 export interface SingleAntStatus {
   agent_id: string;
@@ -51,11 +51,11 @@ export interface RecursiveNode {
 export function getStatus(scope: "colony" | "self" | "subtree", root?: string) {
   const p = new URLSearchParams({ scope });
   if (root) p.set("root", root);
-  return json<ColonyStatus | RecursiveNode>(`${QUEEN}/status?${p}`);
+  return json<ColonyStatus | RecursiveNode>(`${NEST}/status?${p}`);
 }
 
 export function postInstruction(instruction: string, taskId?: string) {
-  return json(`${QUEEN}/instruction`, {
+  return json(`${NEST}/instruction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ instruction, task_id: taskId ?? null }),

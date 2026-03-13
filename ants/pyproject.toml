@@ -5,8 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ants"
 version = "0.1.0"
-description = "Multi-agent collaboration: each ant is a container, AIP protocol, status API."
-readme = "README.md"
+description = "Ants — Talent Market: agent teams with AIP protocol, Docker spawning, and LLM tools."
 requires-python = ">=3.12"
 dependencies = [
     "aip-protocol @ git+https://github.com/phanhom/aip.git@v1.3.0#subdirectory=sdk-python",
@@ -37,10 +36,3 @@ include = ["ants*"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]

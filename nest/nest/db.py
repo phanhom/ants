@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -13,7 +12,7 @@ import pymysql
 import pymysql.cursors
 import pymysql.err
 
-from ants.runtime.runtime_config import load_runtime_config
+from nest.config import get_mysql_config
 
 log = logging.getLogger(__name__)
 
@@ -36,23 +35,7 @@ _TABLES: dict[str, str] = {
 }
 
 
-def _get_mysql_config() -> dict[str, Any]:
-    """Build MySQL config from config.json, with env-var overrides."""
-    conf = load_runtime_config()
-    mysql = conf.get("mysql") or {}
-    if not isinstance(mysql, dict):
-        mysql = {}
-    return {
-        "host": os.getenv("MYSQL_HOST") or mysql.get("host") or "mysql",
-        "port": int(os.getenv("MYSQL_PORT") or mysql.get("port") or 3306),
-        "user": os.getenv("MYSQL_USER") or mysql.get("user") or "ants",
-        "password": os.getenv("MYSQL_PASSWORD") or mysql.get("password") or "changeme",
-        "database": os.getenv("MYSQL_DATABASE") or mysql.get("database") or "ants",
-    }
-
-
 def _raw_connect(cfg: dict[str, Any], *, use_db: bool = True) -> pymysql.connections.Connection:
-    """Low-level connect; raises on failure."""
     kw: dict[str, Any] = {
         "host": cfg["host"],
         "port": cfg["port"],
@@ -67,7 +50,6 @@ def _raw_connect(cfg: dict[str, Any], *, use_db: bool = True) -> pymysql.connect
 
 
 def _ensure_database(cfg: dict[str, Any]) -> None:
-    """Create the database if it doesn't exist."""
     conn = _raw_connect(cfg, use_db=False)
     try:
         db = cfg["database"]
@@ -84,7 +66,6 @@ def _ensure_database(cfg: dict[str, Any]) -> None:
 
 
 def _ensure_tables(conn: pymysql.connections.Connection) -> None:
-    """Create all required tables."""
     with conn.cursor() as cur:
         for name, ddl in _TABLES.items():
             cur.execute(ddl)
@@ -93,12 +74,9 @@ def _ensure_tables(conn: pymysql.connections.Connection) -> None:
 
 
 def init_db() -> None:
-    """Connect to MySQL, create database + all tables. Called once at queen startup.
-    Retries until MySQL is reachable, then fails hard on schema errors."""
     global _connection, _ready
-    cfg = _get_mysql_config()
-    log.info("mysql config: host=%s port=%s user=%s db=%s", cfg["host"], cfg["port"], cfg["user"], cfg["database"])
-
+    cfg = get_mysql_config()
+    log.info("mysql config: host=%s port=%s db=%s", cfg["host"], cfg["port"], cfg["database"])
     max_wait, interval = 120, 3
     elapsed = 0
     while elapsed < max_wait:
@@ -107,7 +85,7 @@ def init_db() -> None:
             _connection = _raw_connect(cfg)
             _ensure_tables(_connection)
             _ready = True
-            log.info("mysql ready — all tables created")
+            log.info("mysql ready")
             return
         except pymysql.err.OperationalError as e:
             code = e.args[0] if e.args else None
@@ -116,23 +94,19 @@ def init_db() -> None:
                 time.sleep(interval)
                 elapsed += interval
             else:
-                log.error("mysql operational error (errno %s): %s", code, e)
                 raise
         except Exception:
             log.exception("unexpected error during mysql init")
             raise
-
-    raise RuntimeError(f"mysql not reachable after {max_wait}s — check host/port/credentials")
+    raise RuntimeError(f"mysql not reachable after {max_wait}s")
 
 
 def get_connection() -> pymysql.connections.Connection | None:
-    """Return the shared connection if init_db() succeeded."""
     if not _ready or _connection is None:
         return None
     try:
         _connection.ping(reconnect=True)
     except Exception:
-        log.warning("mysql connection lost, ping failed")
         return None
     return _connection
 
@@ -158,3 +132,50 @@ def write_trace(agent_id: str, trace_type: str, payload: dict[str, Any]) -> bool
         except Exception:
             pass
         return False
+
+
+def query_traces(
+    agent_id: str | None = None,
+    trace_type: str | None = None,
+    since: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    conn = get_connection()
+    if conn is None:
+        return []
+    clauses: list[str] = []
+    params: list[Any] = []
+    if agent_id:
+        clauses.append("agent_id = %s")
+        params.append(agent_id)
+    if trace_type:
+        clauses.append("trace_type = %s")
+        params.append(trace_type)
+    if since:
+        clauses.append("ts >= %s")
+        params.append(since)
+    where = " AND ".join(clauses) if clauses else "1=1"
+    sql = f"SELECT agent_id, trace_type, ts, payload FROM trace_events WHERE {where} ORDER BY id DESC LIMIT %s"
+    params.append(limit)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        out = []
+        for r in rows:
+            p = r.get("payload")
+            if isinstance(p, str):
+                try:
+                    p = json.loads(p)
+                except Exception:
+                    pass
+            out.append({
+                "agent_id": r["agent_id"],
+                "trace_type": r["trace_type"],
+                "ts": r["ts"],
+                "payload": p,
+            })
+        return out
+    except Exception:
+        log.exception("query_traces failed")
+        return []

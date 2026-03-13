@@ -1,7 +1,7 @@
-# Stage 1: build SPA (VITE_QUEEN_URL = URL the browser uses to reach the queen)
+# Stage 1: build SPA (VITE_NEST_URL = URL the browser uses to reach Nest API)
 FROM node:20-alpine AS builder
-ARG VITE_QUEEN_URL=http://localhost:22000
-ENV VITE_QUEEN_URL=${VITE_QUEEN_URL}
+ARG VITE_NEST_URL=http://localhost:22000
+ENV VITE_NEST_URL=${VITE_NEST_URL}
 WORKDIR /app
 COPY package.json ./
 RUN npm install

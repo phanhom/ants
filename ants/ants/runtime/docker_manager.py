@@ -1,4 +1,4 @@
-"""Docker orchestration for 蚁后 (queen). Spawns workers with runtime config and exposed port."""
+"""Docker orchestration for Ants. Spawns workers with runtime config and Nest registration."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ WORKER_SERVICE_PORT = 22001
 try:
     import docker
     from docker.errors import DockerException, NotFound
-except Exception:  # pragma: no cover - handled at runtime
+except Exception:
     docker = None
     DockerException = Exception
     NotFound = Exception
@@ -22,12 +22,9 @@ _TRACE_SUBDIRS = ("workspace", "logs", "conversations", "aip", "todos", "reports
 
 
 class DockerSpawner:
-    """Create child ant containers idempotently. Used at startup or by 二把手 dynamically."""
 
     def __init__(self) -> None:
-        # Host path used by Docker daemon for bind-mount sources.
         self.project_root = Path((os.getenv("ANTS_HOST_PROJECT_ROOT") or "").strip()).expanduser()
-        # Container-local mirror of the repo for checking config files and creating trace dirs.
         self.project_root_local = Path("/app/host")
         self.image = (os.getenv("ANTS_IMAGE") or "ants:latest").strip()
         self.network = (os.getenv("ANTS_NETWORK") or "").strip() or None
@@ -39,15 +36,12 @@ class DockerSpawner:
                 self.client = None
 
     def available(self) -> bool:
-        """Whether Docker is reachable and host project root is configured."""
         return self.client is not None and bool(str(self.project_root).strip())
 
     def child_container_name(self, agent_id: str) -> str:
-        """Stable container naming for idempotent restarts."""
         return f"ants-{agent_id}"
 
     def ensure_volume_dirs(self, agent_id: str) -> Path:
-        """Create per-ant volume subdirs on host so binds work. Returns ant volume root."""
         root = self.project_root_local / "volumes" / agent_id
         for sub in _TRACE_SUBDIRS:
             (root / sub).mkdir(parents=True, exist_ok=True)
@@ -82,7 +76,6 @@ class DockerSpawner:
         extra_env: dict[str, str] | None = None,
         command: list[str] | None = None,
     ) -> str | None:
-        """Create or start a single worker container. Injects runtime config env and exposes worker port."""
         if not self.available():
             return None
         assert self.client is not None
@@ -100,14 +93,18 @@ class DockerSpawner:
         if not (self.project_root_local / "configs" / "agents" / config_file).exists():
             return None
         volumes = self._volume_binds(child.agent_id, config_file)
-        queen_url = "http://host.docker.internal:22000"
+
+        nest_url = os.getenv("NEST_URL", "http://nest:22000")
+        nest_secret = os.getenv("NEST_SECRET", "")
+
         environment = {
             "ANT_CONFIG": "/app/config/agent.json",
             "ANT_AGENT_ID": child.agent_id,
             "ANT_BASE_DIR": f"/runtime/volumes/{child.agent_id}",
             "ANT_WORKSPACE": "/workspace",
-            "ANT_QUEEN_URL": queen_url,
             "ANT_SERVICE_PORT": str(WORKER_SERVICE_PORT),
+            "NEST_URL": nest_url,
+            "NEST_SECRET": nest_secret,
         }
         if extra_env:
             environment.update(extra_env)
@@ -138,7 +135,6 @@ class DockerSpawner:
         children: Iterable[AgentConfig],
         extra_env: dict[str, str] | None = None,
     ) -> list[str]:
-        """Create or start worker containers. Pass extra_env (e.g. runtime config) to inject into all."""
         if not self.available():
             return []
         created: list[str] = []

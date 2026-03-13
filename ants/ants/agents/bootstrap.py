@@ -1,11 +1,13 @@
-"""Ant bootstrap: hot-load tools, persist traces, and spawn subordinates if root."""
+"""Ant bootstrap: hot-load tools, register with Nest, heartbeat, spawn subordinates if root."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import time
+import threading
 from pathlib import Path
 
 from ants.runtime.config import load_agent_config
@@ -16,10 +18,10 @@ from ants.runtime.traces import append_jsonl, ensure_trace_dirs, utc_now_iso, wr
 SHARED_TOOLS = Path("/shared/tools")
 POLL_INTERVAL = 5.0
 CONFIG_DIR = Path("/app/config")
+WORKER_PORT = 22001
 
 
 def _load_tool_module(path: Path) -> str | None:
-    """Load or reload a shared tool file as a Python module."""
     if path.suffix != ".py" or path.name.startswith("_"):
         return None
     name = f"ants_tools_{path.stem}"
@@ -36,7 +38,6 @@ def _load_tool_module(path: Path) -> str | None:
 
 
 def discover_tools() -> dict[str, Path]:
-    """Scan `/shared/tools` and load all public `.py` modules."""
     tools: dict[str, Path] = {}
     if not SHARED_TOOLS.is_dir():
         return tools
@@ -50,7 +51,6 @@ def discover_tools() -> dict[str, Path]:
 
 
 def load_child_configs(root_config: AgentConfig) -> list[AgentConfig]:
-    """Load only the configured direct subordinates for the root ant."""
     children: list[AgentConfig] = []
     for agent_id in root_config.subordinates[: root_config.max_subordinates]:
         config_path = CONFIG_DIR / f"{agent_id}.json"
@@ -61,27 +61,21 @@ def load_child_configs(root_config: AgentConfig) -> list[AgentConfig]:
 
 
 def spawn_subordinates(root_config: AgentConfig) -> list[str]:
-    """Create or start fixed child containers for the root ant."""
     if not root_config.can_spawn_subordinates:
         return []
     spawner = DockerSpawner()
     children = load_child_configs(root_config)
     created = spawner.ensure_children(children)
-    write_log(
-        root_config.agent_id,
-        "runtime.jsonl",
-        {
-            "event": "spawn_subordinates",
-            "children": [child.agent_id for child in children],
-            "containers": created,
-            "docker_available": spawner.available(),
-        },
-    )
+    write_log(root_config.agent_id, "runtime.jsonl", {
+        "event": "spawn_subordinates",
+        "children": [child.agent_id for child in children],
+        "containers": created,
+        "docker_available": spawner.available(),
+    })
     return created
 
 
 def write_skill_snapshot(config: AgentConfig, tool_names: list[str]) -> None:
-    """Persist the current skills and tool registry for the ant."""
     base = ensure_trace_dirs(config.agent_id)
     payload = {
         "ts": utc_now_iso(),
@@ -93,15 +87,82 @@ def write_skill_snapshot(config: AgentConfig, tool_names: list[str]) -> None:
     append_jsonl(base / "context" / "skills.jsonl", payload)
 
 
+def _nest_url() -> str:
+    return (os.getenv("NEST_URL") or "").strip()
+
+
+def _register_with_nest(config: AgentConfig) -> str | None:
+    """Register this worker with Nest. Returns heartbeat path or None."""
+    nest = _nest_url()
+    if not nest:
+        return None
+    import httpx
+    import socket
+    hostname = socket.gethostname()
+    base_url = f"http://ants-{config.agent_id}:{WORKER_PORT}"
+    secret = (os.getenv("NEST_SECRET") or "").strip()
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    body = {
+        "agent_id": config.agent_id,
+        "base_url": base_url,
+        "namespace": "default",
+        "role": config.role,
+        "superior": config.superior,
+        "subordinates": config.subordinates,
+        "authority_weight": config.authority_weight,
+        "display_name": config.display_name,
+        "endpoints": {
+            "aip": f"{base_url}/v1/aip",
+            "status": f"{base_url}/v1/status",
+        },
+    }
+    delay = 1.0
+    max_delay = 60.0
+    for _ in range(20):
+        try:
+            with httpx.Client(timeout=10) as client:
+                resp = client.post(f"{nest}/v1/registry/agents", json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                write_log(config.agent_id, "runtime.jsonl", {"event": "nest_registered"})
+                return data.get("heartbeat_url")
+        except Exception as e:
+            write_log(config.agent_id, "runtime.jsonl", {"event": "nest_register_retry", "error": str(e)})
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay)
+    return None
+
+
+def _send_heartbeat(config: AgentConfig, heartbeat_path: str) -> None:
+    """Send one heartbeat to Nest."""
+    nest = _nest_url()
+    if not nest:
+        return
+    import httpx
+    from datetime import datetime, timezone
+    url = f"{nest}{heartbeat_path}"
+    secret = (os.getenv("NEST_SECRET") or "").strip()
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    try:
+        with httpx.Client(timeout=5, headers=headers) as client:
+            client.post(url, json={
+                "ok": True,
+                "lifecycle": "running",
+                "pending_tasks": 0,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+    except Exception:
+        pass
+
+
 def run_bootstrap(poll: bool = True) -> None:
-    """Start an ant worker process and optionally keep hot-loading shared tools."""
     config = load_agent_config()
     ensure_trace_dirs(config.agent_id)
-    write_log(
-        config.agent_id,
-        "runtime.jsonl",
-        {"event": "bootstrap_started", "role": config.role, "superior": config.superior},
-    )
+    write_log(config.agent_id, "runtime.jsonl", {
+        "event": "bootstrap_started",
+        "role": config.role,
+        "superior": config.superior,
+    })
 
     tools = discover_tools()
     write_skill_snapshot(config, list(tools.keys()))
@@ -110,24 +171,27 @@ def run_bootstrap(poll: bool = True) -> None:
     if config.can_spawn_subordinates:
         spawn_subordinates(config)
 
+    heartbeat_path = _register_with_nest(config)
+
     if not poll:
         return
 
     last_mtimes: dict[Path, float] = {}
     while True:
         time.sleep(POLL_INTERVAL)
-        heartbeat = {
+
+        if heartbeat_path:
+            _send_heartbeat(config, heartbeat_path)
+
+        write_log(config.agent_id, "runtime.jsonl", {
             "ts": utc_now_iso(),
             "event": "heartbeat",
             "agent_id": config.agent_id,
             "role": config.role,
-        }
-        print(json.dumps(heartbeat, ensure_ascii=True))
-        write_log(config.agent_id, "runtime.jsonl", heartbeat)
+        })
 
         if not SHARED_TOOLS.is_dir():
             continue
-
         for path in SHARED_TOOLS.rglob("*.py"):
             if path.name.startswith("_"):
                 continue
@@ -137,11 +201,11 @@ def run_bootstrap(poll: bool = True) -> None:
             last_mtimes[path] = mtime
             name = _load_tool_module(path)
             if name:
-                write_log(
-                    config.agent_id,
-                    "runtime.jsonl",
-                    {"event": "hot_loaded_tool", "tool_name": name, "path": str(path)},
-                )
+                write_log(config.agent_id, "runtime.jsonl", {
+                    "event": "hot_loaded_tool",
+                    "tool_name": name,
+                    "path": str(path),
+                })
 
 
 if __name__ == "__main__":
