@@ -1,19 +1,16 @@
-"""Status aggregation from config, traces, and Docker state."""
+"""Status models and aggregation from config, traces, and Docker state."""
 
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import httpx
+from pydantic import BaseModel, Field
 
-from ants.protocol.status import (
-    ColonyStatusDocument,
-    RecursiveStatusNode,
-    SingleAntStatus,
-    StatusEndpoints,
-    WorkStatusSnapshot,
-)
 from ants.runtime.models import AgentConfig, AgentLifecycle
 from ants.runtime.traces import get_agent_base_dir, list_recent_jsonl
 
@@ -25,6 +22,77 @@ except Exception:  # pragma: no cover - handled at runtime
     DockerException = Exception
     NotFound = Exception
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Ants-specific status models (not part of AIP SDK — colony runtime state)
+# ---------------------------------------------------------------------------
+
+class StatusScope(str, Enum):
+    self_scope = "self"
+    subtree = "subtree"
+    colony = "colony"
+
+
+class StatusEndpoints(BaseModel):
+    aip: str | None = None
+    status: str | None = None
+
+
+class WorkStatusSnapshot(BaseModel):
+    todos: list[dict[str, Any]] = Field(default_factory=list)
+    reports: list[dict[str, Any]] = Field(default_factory=list)
+    recent_aip: list[dict[str, Any]] = Field(default_factory=list)
+    last_seen: str | None = None
+    pending_todos: int = 0
+
+
+class SingleAntStatus(BaseModel):
+    agent_id: str
+    role: str
+    superior: str | None = None
+    authority_weight: int | None = None
+    lifecycle: str | None = None
+    port: int | None = None
+    ok: bool = True
+    base_url: str | None = None
+    endpoints: StatusEndpoints | None = None
+    pending_todos: int = 0
+    recent_errors: int = 0
+    waiting_for_approval: bool = False
+    last_report_at: datetime | None = None
+    last_aip_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    container_name: str | None = None
+    container_state: str | None = None
+    work: WorkStatusSnapshot | None = None
+
+
+class RecursiveStatusNode(BaseModel):
+    self: SingleAntStatus
+    subordinates: list["RecursiveStatusNode"] = Field(default_factory=list)
+
+
+class ColonyStatusDocument(BaseModel):
+    ok: bool = True
+    service: str = "ants"
+    port: int = 22000
+    root_agent_id: str
+    timestamp: datetime = Field(default_factory=_utc_now)
+    topology: dict[str, list[str]] = Field(default_factory=dict)
+    waiting_for_approval: bool = False
+    ants: list[SingleAntStatus] = Field(default_factory=list)
+
+
+RecursiveStatusNode.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Aggregation logic
+# ---------------------------------------------------------------------------
 
 QUEEN_SERVICE_PORT = 22000
 
@@ -41,14 +109,12 @@ def _get_status_limits():
 
 
 def _normalize_base_url(base_url: str | None) -> str | None:
-    """Normalize a base URL for status/aip discovery."""
     if not base_url:
         return None
     return base_url.rstrip("/")
 
 
 def _build_endpoints(base_url: str | None) -> StatusEndpoints | None:
-    """Build discoverable endpoint URLs from a base URL."""
     if not base_url:
         return None
     return StatusEndpoints(aip=f"{base_url}/aip", status=f"{base_url}/status")
@@ -61,7 +127,6 @@ def _resolve_base_url(
     request_base_url: str | None = None,
     is_root: bool = False,
 ) -> str | None:
-    """Resolve a discoverable base URL for one ant."""
     if agent.status_api_base:
         return _normalize_base_url(agent.status_api_base)
     if request_base_url:
@@ -227,6 +292,8 @@ async def build_worker_subtree_status(
     request_base_url: str | None = None,
 ) -> RecursiveStatusNode:
     """Build recursive status for a worker and any configured subordinates."""
+    from ants.runtime.docker_manager import WORKER_SERVICE_PORT
+
     self_status = build_worker_self_status(config, port=port, request_base_url=request_base_url)
     agents_by_id = {agent.agent_id: agent for agent in agents}
     subordinates: list[RecursiveStatusNode] = []

@@ -1,31 +1,30 @@
-"""Load configs/config.yaml (fallback runtime.yaml) and expose as env for 蚁后 and workers."""
+"""Load configs/config.json and expose as env for 蚁后 and workers."""
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 
 def get_runtime_config_path() -> Path:
-    """Resolve config path: ANTS_RUNTIME_CONFIG or configs/config.yaml."""
+    """Resolve config path: ANTS_RUNTIME_CONFIG or configs/config.json."""
     if os.getenv("ANTS_RUNTIME_CONFIG"):
         return Path(os.environ["ANTS_RUNTIME_CONFIG"])
     for base in (Path.cwd(), Path("/app")):
-        p = base / "configs" / "config.yaml"
+        p = base / "configs" / "config.json"
         if p.exists():
             return p
-    return Path("/app/configs/config.yaml")
+    return Path("/app/configs/config.json")
 
 
 def load_runtime_config() -> dict[str, Any]:
-    """Load config.yaml; no env substitution, literal values only."""
+    """Load config.json; no env substitution, literal values only."""
     path = get_runtime_config_path()
     if not path.exists():
         return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return json.loads(path.read_text(encoding="utf-8")) or {}
 
 
 def get_ants_config() -> dict[str, Any]:

@@ -33,7 +33,7 @@ def run(agent_id: str | None = None) -> str:
         from pathlib import Path
         from ants.runtime.config import get_config_dir
         config_dir = get_config_dir()
-        child_path = config_dir / f"{agent_id}.yaml"
+        child_path = config_dir / f"{agent_id}.json"
         if not child_path.exists():
             return f"Error: no config for subordinate {agent_id}"
         child_config = load_agent_config(child_path)

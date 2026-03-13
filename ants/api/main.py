@@ -15,9 +15,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from ants.protocol.aip import AIPAction, AIPMessage, AIPStatus
-from ants.protocol.send import SendParams, async_send_aip, async_send_aip_batch
-from ants.protocol.status import StatusScope
+from aip import AIPAction, AIPMessage, AIPStatus, SendParams, async_send, async_send_batch
 from ants.runtime.config import (
     get_config_dir,
     list_available_agent_ids,
@@ -27,7 +25,7 @@ from ants.runtime.config import (
 from ants.runtime.docker_manager import DockerSpawner, WORKER_SERVICE_PORT
 from ants.runtime.models import AgentConfig
 from ants.runtime.runtime_config import get_ants_config, load_runtime_config, runtime_config_to_env
-from ants.runtime.status import StatusAggregator, build_recursive_status_tree
+from ants.runtime.status import StatusAggregator, StatusScope, build_recursive_status_tree
 from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import append_aip_message, ensure_trace_dirs, write_log
 
@@ -50,7 +48,7 @@ def require_admin(x_admin_token: str | None = Header(None, alias="X-Admin-Token"
 async def lifespan(app: FastAPI):
     """蚁后 (queen) boot: ensure traces; spawn all workers from config (except self)."""
     config_dir = get_config_dir()
-    root_path = config_dir / "creator_decider.yaml"
+    root_path = config_dir / "creator_decider.json"
     if not root_path.exists():
         raise FileNotFoundError(
             f"Root config not found: {root_path}. Set ANTS_CONFIG_DIR or run from repo root."
@@ -63,7 +61,8 @@ async def lifespan(app: FastAPI):
     write_log(root_config.agent_id, "runtime.jsonl", {"event": "queen_started", "port": 22000})
 
     ac = get_ants_config()
-    auto_spawn = (ac.get("auto_spawn_default") or "1").strip().lower() in ("1", "true", "yes")
+    raw = ac.get("auto_spawn_default", True)
+    auto_spawn = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("1", "true", "yes")
     if auto_spawn and root_config.can_spawn_subordinates:
         spawner = DockerSpawner()
         workers = [a for a in app.state.visible_agents if a.agent_id != root_config.agent_id]
@@ -103,6 +102,7 @@ _colony_status_cache: dict[str, tuple[float, dict]] = {}
 # ---------- Interface 1: Status / work info (aggregate for colony) ----------
 
 @app.get("/status")
+@app.get("/v1/status")
 async def status(
     request: Request,
     scope: StatusScope = Query(StatusScope.colony),
@@ -152,7 +152,7 @@ async def status(
 # ---------- Interface 2: Container-to-container conversation (AIP); supports cross-server ----------
 
 def _aip_send_params() -> SendParams:
-    """AIP send params: config.yaml ants.* or env or defaults."""
+    """AIP send params from config.json ants.* section."""
     ac = get_ants_config()
     timeout = 30.0
     try:
@@ -186,17 +186,16 @@ def _resolve_worker_base_url(
 
 
 async def _forward_aip(msg: AIPMessage, target_agent_id: str, visible_agents: list[AgentConfig]) -> dict:
-    """Forward AIP to local worker or remote (to_base_url). Uses protocol async_send_aip with retry/backoff."""
+    """Forward AIP to local worker or remote (to_base_url). Uses SDK async_send with retry/backoff."""
     base_url = _resolve_worker_base_url(target_agent_id, visible_agents, msg)
-    body = msg.to_wire()
-    body["aip_id"] = body.get("message_id", "")
+    body = msg.model_dump(by_alias=True, mode="json")
     log_extra: dict[str, Any] = {}
     if getattr(msg, "trace_id", None):
         log_extra["trace_id"] = msg.trace_id
-    if getattr(msg, "from_ant", None):
-        log_extra["agent_id"] = msg.from_ant
+    if getattr(msg, "from_agent", None):
+        log_extra["agent_id"] = msg.from_agent
     try:
-        return await async_send_aip(
+        return await async_send(
             base_url,
             body,
             params=_aip_send_params(),
@@ -281,6 +280,7 @@ def _decompose_instruction_sync(instruction: str, workers: list[AgentConfig]) ->
 
 
 @app.post("/aip")
+@app.post("/v1/aip")
 async def aip_receive(body: dict) -> dict:
     """
     Receive AIP message from any ant or user. Same-host or cross-server (use to_base_url).
@@ -293,7 +293,7 @@ async def aip_receive(body: dict) -> dict:
     except Exception as e:
         raise HTTPException(422, f"Invalid AIP message: {e}") from e
 
-    append_aip_message(root_config.agent_id, "in", msg.to_wire())
+    append_aip_message(root_config.agent_id, "in", msg.model_dump(by_alias=True, mode="json"))
 
     if msg.to != root_config.agent_id and msg.to != "*":
         out = await _forward_aip(msg, msg.to, visible_agents)
@@ -339,7 +339,7 @@ async def aip_receive(body: dict) -> dict:
                 summary = t.get("summary", "")
                 payload = {**payload_base, "summary": summary}
                 forward_msg = AIPMessage(
-                    from_ant=root_config.agent_id,
+                    from_agent=root_config.agent_id,
                     to=to_id,
                     action=AIPAction.assign_task,
                     intent="user_instruction",
@@ -348,10 +348,9 @@ async def aip_receive(body: dict) -> dict:
                     correlation_id=trace_id,
                 )
                 base_url = _resolve_worker_base_url(to_id, visible_agents, forward_msg)
-                wire = forward_msg.to_wire()
-                wire["aip_id"] = wire.get("message_id", "")
+                wire = forward_msg.model_dump(by_alias=True, mode="json")
                 batch_requests.append((base_url, wire))
-            results = await async_send_aip_batch(
+            results = await async_send_batch(
                 batch_requests,
                 params=params,
                 log_extra={"trace_id": trace_id, "agent_id": root_config.agent_id},
@@ -375,7 +374,7 @@ async def aip_receive(body: dict) -> dict:
             return results[-1] if results else {"ok": True, "message": "delegated"}
         first = workers[0]
         forward_msg = AIPMessage(
-            from_ant=root_config.agent_id,
+            from_agent=root_config.agent_id,
             to=first.agent_id,
             action=AIPAction.assign_task,
             intent="user_instruction",
@@ -391,7 +390,7 @@ async def aip_receive(body: dict) -> dict:
         )
         return await _forward_aip(forward_msg, first.agent_id, visible_agents)
 
-    msg.touch(AIPStatus.in_progress)
+    msg.status = AIPStatus.in_progress
     return {"ok": True, "message_id": msg.message_id, "to": root_config.agent_id, "status": "received"}
 
 
@@ -407,13 +406,13 @@ async def instruction(body: InstructionRequest) -> dict:
     """Convenience: user instruction as AIP user_instruction to queen (then delegated to worker)."""
     root_config: AgentConfig = app.state.root_config
     msg = AIPMessage(
-        from_ant="user",
+        from_agent="user",
         to=root_config.agent_id,
         action=AIPAction.user_instruction,
         intent="user_instruction",
         payload={"instruction": body.instruction, "task_id": body.task_id},
     )
-    return await aip_receive(msg.to_wire())
+    return await aip_receive(msg.model_dump(by_alias=True, mode="json"))
 
 
 # ---------- Internal (admin): list configs, dynamic spawn ----------
@@ -436,7 +435,7 @@ async def internal_spawn(
 ) -> dict:
     """Create one worker container from config. Injects runtime env."""
     config_dir: Path = app.state.config_dir
-    path = config_dir / f"{body.agent_id}.yaml"
+    path = config_dir / f"{body.agent_id}.json"
     if not path.exists():
         raise HTTPException(404, f"No config for agent_id: {body.agent_id}")
     cfg = load_agent_config(path)

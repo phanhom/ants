@@ -44,9 +44,9 @@ def run(
     if agent_id:
         log_extra["agent_id"] = agent_id
     try:
-        from ants.protocol.send import send_aip, SendParams
+        from aip import send, SendParams
         params = SendParams(timeout=30.0, max_retries=4)
-        data = send_aip(base, body, params=params, log_extra=log_extra if log_extra else None)
+        data = send(base, body, params=params, log_extra=log_extra if log_extra else None)
         return json.dumps(data, ensure_ascii=False)
     except Exception as e:
         return f"Error sending AIP: {e}"

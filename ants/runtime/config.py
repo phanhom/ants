@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-
-import yaml
 
 from ants.runtime.models import AgentConfig
 
 
 def get_config_dir() -> Path:
-    """Config dir: env ANTS_CONFIG_DIR 或默认 cwd/configs/agents、/app/configs/agents."""
+    """Config dir: env ANTS_CONFIG_DIR or default cwd/configs/agents, /app/configs/agents."""
     path = (os.getenv("ANTS_CONFIG_DIR") or "").strip()
     if path:
         return Path(path)
@@ -26,24 +25,24 @@ def get_config_path() -> Path:
     explicit = os.getenv("ANT_CONFIG")
     if explicit:
         return Path(explicit)
-    return get_config_dir() / "creator_decider.yaml"
+    return get_config_dir() / "creator_decider.json"
 
 
 def load_agent_config(path: str | Path | None = None) -> AgentConfig:
-    """Load a YAML config into the shared AgentConfig model."""
+    """Load a JSON config into the shared AgentConfig model."""
     config_path = Path(path) if path else get_config_path()
     if not config_path.exists():
         raise FileNotFoundError(f"Agent config not found: {config_path}")
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    payload = json.loads(config_path.read_text(encoding="utf-8")) or {}
     return AgentConfig.model_validate(payload)
 
 
 def list_available_agent_ids(config_dir: Path | None = None) -> list[str]:
-    """List agent_ids that have a YAML in config dir (employee templates)."""
+    """List agent_ids from JSON configs in config dir (employee templates)."""
     directory = config_dir or get_config_dir()
     if not directory.is_dir():
         return []
-    return [p.stem for p in directory.glob("*.yaml") if p.stem and not p.name.startswith(".")]
+    return [p.stem for p in directory.glob("*.json") if p.stem and not p.name.startswith(".")]
 
 
 def load_all_agent_configs(config_dir: Path | None = None) -> list[AgentConfig]:
@@ -53,9 +52,9 @@ def load_all_agent_configs(config_dir: Path | None = None) -> list[AgentConfig]:
     configs: list[AgentConfig] = []
     root_id = "creator_decider"
     if root_id in ids:
-        configs.append(load_agent_config(directory / f"{root_id}.yaml"))
+        configs.append(load_agent_config(directory / f"{root_id}.json"))
     for aid in ids:
         if aid == root_id:
             continue
-        configs.append(load_agent_config(directory / f"{aid}.yaml"))
+        configs.append(load_agent_config(directory / f"{aid}.json"))
     return configs

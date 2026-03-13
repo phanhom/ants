@@ -53,7 +53,7 @@ def load_child_configs(root_config: AgentConfig) -> list[AgentConfig]:
     """Load only the configured direct subordinates for the root ant."""
     children: list[AgentConfig] = []
     for agent_id in root_config.subordinates[: root_config.max_subordinates]:
-        config_path = CONFIG_DIR / f"{agent_id}.yaml"
+        config_path = CONFIG_DIR / f"{agent_id}.json"
         if not config_path.exists():
             continue
         children.append(load_agent_config(config_path))

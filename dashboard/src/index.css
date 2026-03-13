@@ -1,10 +1,53 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
-  background: #0d1117;
-  color: #e6edf3;
+@layer base {
+  * {
+    border-color: rgba(240, 246, 252, 0.08);
+  }
+
+  body {
+    margin: 0;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(240, 246, 252, 0.1);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(240, 246, 252, 0.2);
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply rounded-xl border border-border bg-surface backdrop-blur-[20px];
+  }
+
+  .glass-card-raised {
+    @apply rounded-xl border border-border bg-surface-raised backdrop-blur-[20px];
+  }
+
+  .metric-value {
+    @apply text-3xl font-semibold tracking-tight;
+  }
+
+  .section-title {
+    @apply text-xs font-medium uppercase tracking-wider text-gray-500;
+  }
 }

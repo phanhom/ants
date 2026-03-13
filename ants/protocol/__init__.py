@@ -1,43 +1,17 @@
-"""AIP: Ants Interaction Protocol models and helpers."""
+"""AIP protocol — re-exports from the aip-protocol SDK (https://github.com/phanhom/aip)."""
 
-__version__ = "1.0"
-
-from ants.protocol.aip import AIPAck, AIPAction, AIPMessage, AIPPriority, AIPStatus, ApprovalState, RouteScope, build_message
-from ants.protocol.send import (
+from aip import (  # noqa: F401
+    AIPAck,
+    AIPAction,
+    AIPMessage,
+    AIPPriority,
+    AIPStatus,
+    ApprovalState,
+    RouteScope,
     SendParams,
-    async_send_aip,
-    async_send_aip_batch,
-    send_aip,
-    send_aip_batch,
+    async_send,
+    async_send_batch,
+    build_message,
+    send,
+    send_batch,
 )
-from ants.protocol.status import (
-    ColonyStatusDocument,
-    RecursiveStatusNode,
-    SingleAntStatus,
-    StatusEndpoints,
-    StatusScope,
-    WorkStatusSnapshot,
-)
-
-__all__ = [
-    "__version__",
-    "AIPAction",
-    "AIPMessage",
-    "SendParams",
-    "send_aip",
-    "send_aip_batch",
-    "async_send_aip",
-    "async_send_aip_batch",
-    "AIPAck",
-    "AIPPriority",
-    "AIPStatus",
-    "ApprovalState",
-    "RouteScope",
-    "build_message",
-    "StatusScope",
-    "StatusEndpoints",
-    "WorkStatusSnapshot",
-    "SingleAntStatus",
-    "RecursiveStatusNode",
-    "ColonyStatusDocument",
-]

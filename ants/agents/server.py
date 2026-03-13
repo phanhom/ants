@@ -7,8 +7,8 @@ import threading
 
 from fastapi import FastAPI, HTTPException, Query, Request
 
-from ants.protocol.aip import AIPAction, AIPMessage, AIPStatus
-from ants.protocol.status import StatusScope
+from aip import AIPAction, AIPMessage, AIPStatus
+from ants.runtime.status import StatusScope
 from ants.runtime.config import load_agent_config, load_all_agent_configs
 from ants.runtime.status import build_worker_self_status, build_worker_subtree_status
 from ants.runtime.trace_log import trace_log
@@ -37,6 +37,7 @@ def startup() -> None:
 # ---------- Interface 1: Container-to-container conversation (AIP) ----------
 
 @app.post("/aip")
+@app.post("/v1/aip")
 async def aip_receive(body: dict) -> dict:
     """
     Receive an AIP message from another ant (same host or remote).
@@ -49,16 +50,16 @@ async def aip_receive(body: dict) -> dict:
         raise HTTPException(422, f"Invalid AIP message: {e}") from e
     if msg.to != config.agent_id and msg.to != "*":
         raise HTTPException(400, f"This ant is {config.agent_id}, message to={msg.to}")
-    payload = msg.to_wire()
+    payload = msg.model_dump(by_alias=True, mode="json")
     append_aip_message(config.agent_id, "in", payload)
-    msg.touch(AIPStatus.in_progress)
+    msg.status = AIPStatus.in_progress
     if msg.action == AIPAction.assign_task and msg.payload:
         payload_obj = msg.payload or {}
         trace_log(
             "assign_task",
             trace_id=payload_obj.get("trace_id"),
             agent_id=config.agent_id,
-            from_ant=msg.from_ant,
+            from_agent=msg.from_agent,
         )
         def _run_task():
             try:
@@ -78,6 +79,7 @@ async def aip_receive(body: dict) -> dict:
 # ---------- Interface 2: Own work info, status, progress ----------
 
 @app.get("/status")
+@app.get("/v1/status")
 async def status(
     request: Request,
     scope: StatusScope = Query(StatusScope.self_scope),

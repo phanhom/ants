@@ -67,7 +67,7 @@ class DockerSpawner:
             str(base / "shared" / "inbox"): {"bind": "/shared/inbox", "mode": "rw"},
             str(base / "volumes"): {"bind": "/runtime/volumes", "mode": "rw"},
             str(base / "configs" / "agents" / config_name): {
-                "bind": "/app/config/agent.yaml",
+                "bind": "/app/config/agent.json",
                 "mode": "ro",
             },
         }
@@ -93,13 +93,13 @@ class DockerSpawner:
             pass
 
         self.ensure_volume_dirs(child.agent_id)
-        config_file = f"{child.agent_id}.yaml"
+        config_file = f"{child.agent_id}.json"
         if not (self.project_root / "configs" / "agents" / config_file).exists():
             return None
         volumes = self._volume_binds(child.agent_id, config_file)
         queen_url = "http://host.docker.internal:22000"
         environment = {
-            "ANT_CONFIG": "/app/config/agent.yaml",
+            "ANT_CONFIG": "/app/config/agent.json",
             "ANT_AGENT_ID": child.agent_id,
             "ANT_BASE_DIR": f"/runtime/volumes/{child.agent_id}",
             "ANT_WORKSPACE": "/workspace",

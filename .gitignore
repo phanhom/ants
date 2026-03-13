@@ -40,7 +40,8 @@ env/
 *.pem
 secrets/
 
-# Ants runtime data (volumes are bind-mounted from host)
+# Ants runtime data (bind-mounted from host)
+data/
 volumes/
 
 # Jupyter
