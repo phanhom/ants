@@ -1,15 +1,26 @@
-"""Status models and aggregation from config, traces, and Docker state."""
+"""Status aggregation from config, traces, and Docker state.
+
+Models are imported from the AIP SDK (v1.3.0+). This module only contains
+the Ants-specific aggregation logic that builds those standard models from
+local volume data and Docker state.
+"""
 
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
+
+from aip import (
+    AgentStatus,
+    GroupStatus,
+    RecursiveStatusNode,
+    StatusEndpoints,
+    StatusScope,
+    WorkSnapshot,
+)
 
 from ants.runtime.models import AgentConfig, AgentLifecycle
 from ants.runtime.traces import get_agent_base_dir, list_recent_jsonl
@@ -23,76 +34,20 @@ except Exception:  # pragma: no cover - handled at runtime
     NotFound = Exception
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+# Re-export SDK types so existing importers keep working
+__all__ = [
+    "AgentStatus",
+    "GroupStatus",
+    "RecursiveStatusNode",
+    "StatusEndpoints",
+    "StatusScope",
+    "WorkSnapshot",
+    "StatusAggregator",
+    "build_recursive_status_tree",
+    "build_worker_self_status",
+    "build_worker_subtree_status",
+]
 
-
-# ---------------------------------------------------------------------------
-# Ants-specific status models (not part of AIP SDK — colony runtime state)
-# ---------------------------------------------------------------------------
-
-class StatusScope(str, Enum):
-    self_scope = "self"
-    subtree = "subtree"
-    colony = "colony"
-
-
-class StatusEndpoints(BaseModel):
-    aip: str | None = None
-    status: str | None = None
-
-
-class WorkStatusSnapshot(BaseModel):
-    todos: list[dict[str, Any]] = Field(default_factory=list)
-    reports: list[dict[str, Any]] = Field(default_factory=list)
-    recent_aip: list[dict[str, Any]] = Field(default_factory=list)
-    last_seen: str | None = None
-    pending_todos: int = 0
-
-
-class SingleAntStatus(BaseModel):
-    agent_id: str
-    role: str
-    superior: str | None = None
-    authority_weight: int | None = None
-    lifecycle: str | None = None
-    port: int | None = None
-    ok: bool = True
-    base_url: str | None = None
-    endpoints: StatusEndpoints | None = None
-    pending_todos: int = 0
-    recent_errors: int = 0
-    waiting_for_approval: bool = False
-    last_report_at: datetime | None = None
-    last_aip_at: datetime | None = None
-    last_seen_at: datetime | None = None
-    container_name: str | None = None
-    container_state: str | None = None
-    work: WorkStatusSnapshot | None = None
-
-
-class RecursiveStatusNode(BaseModel):
-    self: SingleAntStatus
-    subordinates: list["RecursiveStatusNode"] = Field(default_factory=list)
-
-
-class ColonyStatusDocument(BaseModel):
-    ok: bool = True
-    service: str = "ants"
-    port: int = 22000
-    root_agent_id: str
-    timestamp: datetime = Field(default_factory=_utc_now)
-    topology: dict[str, list[str]] = Field(default_factory=dict)
-    waiting_for_approval: bool = False
-    ants: list[SingleAntStatus] = Field(default_factory=list)
-
-
-RecursiveStatusNode.model_rebuild()
-
-
-# ---------------------------------------------------------------------------
-# Aggregation logic
-# ---------------------------------------------------------------------------
 
 QUEEN_SERVICE_PORT = 22000
 
@@ -165,7 +120,7 @@ class StatusAggregator:
         container.reload()
         return name, container.status
 
-    def _derive_status(self, agent: AgentConfig, request_base_url: str | None = None) -> SingleAntStatus:
+    def _derive_status(self, agent: AgentConfig, request_base_url: str | None = None) -> AgentStatus:
         base = self.volumes_root / agent.agent_id
         lim = _get_status_limits()
         todo_items = list_recent_jsonl(base / "todos" / "items.jsonl", limit=lim["todos"])
@@ -198,7 +153,7 @@ class StatusAggregator:
             request_base_url=request_base_url,
             is_root=is_root,
         )
-        return SingleAntStatus(
+        return AgentStatus(
             agent_id=agent.agent_id,
             role=agent.role,
             superior=agent.superior,
@@ -207,33 +162,34 @@ class StatusAggregator:
             port=port,
             base_url=base_url,
             endpoints=_build_endpoints(base_url),
-            pending_todos=sum(1 for item in todo_items if item.get("status") != "completed"),
+            pending_tasks=sum(1 for item in todo_items if item.get("status") != "completed"),
             recent_errors=recent_errors,
             waiting_for_approval=waiting_for_approval,
-            last_report_at=report_items[-1].get("ts") if report_items else None,
-            last_aip_at=aip_items[-1].get("updated_at") if aip_items else None,
+            last_message_at=aip_items[-1].get("updated_at") if aip_items else None,
             last_seen_at=log_items[-1].get("ts") if log_items else None,
-            container_name=container_name,
-            container_state=container_state,
+            metadata={
+                "container_name": container_name,
+                "container_state": container_state,
+                "last_report_at": report_items[-1].get("ts") if report_items else None,
+            },
         )
 
-    def build(self, agents: list[AgentConfig], request_base_url: str | None = None) -> ColonyStatusDocument:
-        """Aggregate all visible ants into one status payload."""
+    def build(self, agents: list[AgentConfig], request_base_url: str | None = None) -> GroupStatus:
+        """Aggregate all visible agents into one status payload."""
         statuses = [self._derive_status(agent, request_base_url=request_base_url) for agent in agents]
         topology = {agent.agent_id: agent.subordinates for agent in agents}
-        return ColonyStatusDocument(
+        return GroupStatus(
             root_agent_id=self.root_config.agent_id,
-            port=QUEEN_SERVICE_PORT,
             topology=topology,
             waiting_for_approval=any(agent.waiting_for_approval for agent in statuses),
-            ants=statuses,
+            agents=statuses,
         )
 
 
 def build_recursive_status_tree(
     root_agent_id: str,
     *,
-    statuses: dict[str, SingleAntStatus],
+    statuses: dict[str, AgentStatus],
     topology: dict[str, list[str]],
 ) -> RecursiveStatusNode:
     """Build a recursive subtree from flat status rows and topology."""
@@ -249,8 +205,8 @@ def build_worker_self_status(
     config: AgentConfig,
     port: int,
     request_base_url: str | None = None,
-) -> SingleAntStatus:
-    """Build this ant's work info and progress from trace dirs (no Docker)."""
+) -> AgentStatus:
+    """Build this agent's work info and progress from trace dirs (no Docker)."""
     base = get_agent_base_dir(config.agent_id)
     lim = _get_status_limits()
     todos = list_recent_jsonl(base / "todos" / "items.jsonl", limit=lim["worker_todos"])
@@ -258,9 +214,9 @@ def build_worker_self_status(
     recent_aip = list_recent_jsonl(base / "aip" / "messages.jsonl", limit=lim["aip"])
     logs = list_recent_jsonl(base / "logs" / "runtime.jsonl", limit=lim["worker_logs"])
     last_seen = logs[-1].get("ts") if logs else None
-    pending_todos = sum(1 for t in todos if t.get("status") != "completed")
+    pending_tasks = sum(1 for t in todos if t.get("status") != "completed")
     base_url = _resolve_base_url(config, port=port, request_base_url=request_base_url)
-    return SingleAntStatus(
+    return AgentStatus(
         agent_id=config.agent_id,
         role=config.role,
         superior=config.superior,
@@ -270,16 +226,18 @@ def build_worker_self_status(
         ok=True,
         base_url=base_url,
         endpoints=_build_endpoints(base_url),
-        pending_todos=pending_todos,
-        last_report_at=reports[-1].get("ts") if reports else None,
-        last_aip_at=recent_aip[-1].get("updated_at") if recent_aip else None,
+        pending_tasks=pending_tasks,
+        last_message_at=recent_aip[-1].get("updated_at") if recent_aip else None,
         last_seen_at=last_seen,
-        work=WorkStatusSnapshot(
-            todos=todos,
+        metadata={
+            "last_report_at": reports[-1].get("ts") if reports else None,
+        },
+        work=WorkSnapshot(
+            tasks=todos,
             reports=reports,
-            recent_aip=recent_aip,
+            recent_messages=recent_aip,
             last_seen=last_seen,
-            pending_todos=pending_todos,
+            pending_tasks=pending_tasks,
         ),
     )
 
@@ -311,7 +269,7 @@ async def build_worker_subtree_status(
                 response.raise_for_status()
                 subordinates.append(RecursiveStatusNode.model_validate(response.json()))
             except Exception:
-                fallback = SingleAntStatus(
+                fallback = AgentStatus(
                     agent_id=child.agent_id,
                     role=child.role,
                     superior=child.superior,
@@ -322,7 +280,7 @@ async def build_worker_subtree_status(
                     base_url=child_base_url,
                     endpoints=_build_endpoints(child_base_url),
                     recent_errors=1,
-                    container_state="unreachable",
+                    metadata={"container_state": "unreachable"},
                 )
                 subordinates.append(RecursiveStatusNode(self=fallback, subordinates=[]))
     return RecursiveStatusNode(self=self_status, subordinates=subordinates)

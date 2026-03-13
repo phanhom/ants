@@ -10,17 +10,18 @@ const ReportsHub = lazy(() => import("./pages/ReportsHub"));
 const Traces = lazy(() => import("./pages/Traces"));
 const CloudDrive = lazy(() => import("./pages/CloudDrive"));
 const AgentDetail = lazy(() => import("./pages/AgentDetail"));
+const OrgChart = lazy(() => import("./pages/OrgChart"));
 
 function PageFallback() {
   return (
-    <div className="space-y-6 animate-fade-in">
-      <Skeleton className="h-8 w-48" />
+    <div className="space-y-6">
+      <Skeleton className="h-8 w-48 rounded-md" />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-28" />
+          <Skeleton key={i} className="h-28 rounded-lg" />
         ))}
       </div>
-      <Skeleton className="h-64" />
+      <Skeleton className="h-64 rounded-lg" />
     </div>
   );
 }
@@ -31,6 +32,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/org" element={<OrgChart />} />
           <Route path="/costs" element={<CostCenter />} />
           <Route path="/tasks" element={<TaskFlow />} />
           <Route path="/reports" element={<ReportsHub />} />

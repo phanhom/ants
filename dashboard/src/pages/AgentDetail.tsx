@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import {
   getStatus,
   postInstruction,
@@ -7,52 +9,69 @@ import {
   getReports,
   getCosts,
   getConversations,
+  getAgentConfigs,
   type ColonyStatus,
   type SingleAntStatus,
-  type TraceEvent,
-  type ReportEntry,
-  type CostEntry,
-  type ConversationMessage,
+  type AgentConfigEntry,
 } from "@/api";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge, StatusDot } from "@/components/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { estimateCost } from "@/lib/costs";
 import { ArrowLeft, Send, Bot, User } from "lucide-react";
 
 export default function AgentDetail() {
   const { agentId } = useParams<{ agentId: string }>();
-  const [ant, setAnt] = useState<SingleAntStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation();
   const [instruction, setInstruction] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Tab data
-  const [reports, setReports] = useState<ReportEntry[]>([]);
-  const [costs, setCosts] = useState<CostEntry[]>([]);
-  const [conversations, setConversations] = useState<ConversationMessage[]>([]);
-  const [traces, setTraces] = useState<TraceEvent[]>([]);
+  const { data: colony, isLoading } = useQuery({
+    queryKey: ["status", "colony"],
+    queryFn: () => getStatus("colony") as Promise<ColonyStatus>,
+    refetchInterval: 15_000,
+  });
 
-  useEffect(() => {
-    if (!agentId) return;
-    setLoading(true);
-    Promise.allSettled([
-      getStatus("colony").then((d) => {
-        const colony = d as ColonyStatus;
-        const found = colony.ants?.find((a) => a.agent_id === agentId);
-        if (found) setAnt(found);
-      }),
-      getReports({ agent_id: agentId, limit: 20 }).then((r) => setReports(r.reports ?? [])),
-      getCosts({ agent_id: agentId, limit: 200 }).then((r) => setCosts(r.entries ?? [])),
-      getConversations(agentId, 50).then((r) => setConversations(r.messages ?? [])),
-      getTraces({ agent_id: agentId, limit: 50 }).then((r) => setTraces(r.events ?? [])),
-    ]).finally(() => setLoading(false));
-  }, [agentId]);
+  const { data: reportsData } = useQuery({
+    queryKey: ["reports", agentId],
+    queryFn: () => getReports({ agent_id: agentId, limit: 20 }),
+    enabled: !!agentId,
+  });
+
+  const { data: costsData } = useQuery({
+    queryKey: ["costs", agentId],
+    queryFn: () => getCosts({ agent_id: agentId, limit: 200 }),
+    enabled: !!agentId,
+  });
+
+  const { data: convData } = useQuery({
+    queryKey: ["conversations", agentId],
+    queryFn: () => getConversations(agentId!, 50),
+    enabled: !!agentId,
+  });
+
+  const { data: tracesData } = useQuery({
+    queryKey: ["traces", agentId],
+    queryFn: () => getTraces({ agent_id: agentId, limit: 50 }),
+    enabled: !!agentId,
+  });
+
+  const { data: configsData } = useQuery({
+    queryKey: ["agent-configs"],
+    queryFn: () => getAgentConfigs(),
+  });
+
+  const ant: SingleAntStatus | undefined = colony?.agents?.find((a) => a.agent_id === agentId);
+  const config: AgentConfigEntry | undefined = configsData?.configs?.find((c) => c.agent_id === agentId);
+  const reports = reportsData?.reports ?? [];
+  const costs = costsData?.entries ?? [];
+  const conversations = convData?.messages ?? [];
+  const traces = tracesData?.events ?? [];
 
   const handleSend = async () => {
     if (!instruction.trim() || sending) return;
@@ -61,7 +80,7 @@ export default function AgentDetail() {
     setSent(null);
     try {
       await postInstruction(instruction);
-      setSent("Instruction sent");
+      setSent(t("agent.instruction_sent"));
       setInstruction("");
     } catch (e) {
       setErr(String(e));
@@ -72,219 +91,243 @@ export default function AgentDetail() {
 
   if (!agentId) return null;
 
-  if (loading) {
+  if (isLoading) {
     return (
-      <div className="space-y-6 animate-fade-in">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32" />
-        <Skeleton className="h-64" />
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-64 rounded-md" />
+        <Skeleton className="h-32 rounded-lg" />
+        <Skeleton className="h-64 rounded-lg" />
       </div>
     );
   }
 
-  const todos = ant?.work?.todos ?? [];
+  const todos = ant?.work?.tasks ?? [];
   const completedTodos = todos.filter((t) => t.status === "completed").length;
   const todoProgress = todos.length > 0 ? Math.round((completedTodos / todos.length) * 100) : 0;
-
-  const totalCost = costs.reduce(
-    (s, c) => s + estimateCost(c.model, c.prompt_tokens, c.completion_tokens),
-    0,
-  );
+  const totalCost = costs.reduce((s, c) => s + estimateCost(c.model, c.prompt_tokens, c.completion_tokens), 0);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Header */}
       <div className="flex items-center gap-3">
-        <Link to="/" className="text-gray-500 hover:text-gray-300 transition-colors">
+        <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </Link>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{agentId}</h1>
-          {ant && <p className="text-sm text-gray-500">{ant.role}</p>}
-        </div>
-        {ant && (
-          <div className="ml-auto flex items-center gap-2">
-            <span className={cn("h-2 w-2 rounded-full", ant.ok ? "bg-emerald-500" : "bg-red-400")} />
-            <Badge variant={ant.lifecycle === "running" ? "success" : "muted"}>
-              {ant.lifecycle ?? "idle"}
-            </Badge>
+        <div className="flex-1">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">{agentId}</h1>
+            {ant && <StatusBadge status={ant.lifecycle ?? "idle"} />}
           </div>
-        )}
+          {ant && <p className="text-sm text-muted-foreground mt-0.5">{ant.role}</p>}
+        </div>
+        {ant && <StatusDot ok={ant.ok} className="h-3 w-3" />}
       </div>
 
-      {/* Status summary */}
-      {ant && (
-        <div className="grid gap-4 sm:grid-cols-4">
-          <Card>
-            <CardTitle>Tasks</CardTitle>
-            <CardContent>
-              <p className="metric-value mt-1">{ant.pending_todos}</p>
-              <p className="text-xs text-gray-500 mt-1">pending</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardTitle>Reports</CardTitle>
-            <CardContent>
-              <p className="metric-value mt-1">{reports.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardTitle>Cost</CardTitle>
-            <CardContent>
-              <p className="metric-value mt-1">${totalCost.toFixed(4)}</p>
-              <p className="text-xs text-gray-500 mt-1">{costs.length} calls</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardTitle>Last Seen</CardTitle>
-            <CardContent>
-              <p className="mt-1 text-sm text-gray-300">
-                {ant.last_seen_at ? formatRelativeTime(ant.last_seen_at) : "Never"}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <Tabs defaultValue="tasks">
-        <TabsList>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
-          <TabsTrigger value="reports">Reports</TabsTrigger>
-          <TabsTrigger value="conversations">Chat</TabsTrigger>
-          <TabsTrigger value="traces">Activity</TabsTrigger>
-          <TabsTrigger value="instruction">Instruct</TabsTrigger>
-        </TabsList>
-
-        {/* Tasks */}
-        <TabsContent value="tasks">
-          {todos.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-600">No tasks</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>{completedTodos}/{todos.length} completed</span>
-                <span>{todoProgress}%</span>
+      {/* Properties + Metrics grid */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+        {/* Main content */}
+        <div className="space-y-6">
+          {/* Metric cards */}
+          <div className="grid gap-3 grid-cols-4">
+            {[
+              { label: t("agent.tasks"), value: String(ant?.pending_tasks ?? 0), sub: t("agent.pending") },
+              { label: t("agent.reports"), value: String(reports.length) },
+              { label: t("agent.cost"), value: `$${totalCost.toFixed(4)}`, sub: `${costs.length} ${t("agent.calls")}` },
+              { label: t("agent.last_seen"), value: ant?.last_seen_at ? formatRelativeTime(ant.last_seen_at) : t("agent.never") },
+            ].map((m) => (
+              <div key={m.label} className="rounded-lg border border-border bg-surface p-3">
+                <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{m.label}</p>
+                <p className="text-lg font-semibold text-foreground mt-1">{m.value}</p>
+                {m.sub && <p className="text-[11px] text-muted-foreground mt-0.5">{m.sub}</p>}
               </div>
-              <Progress value={todoProgress} />
-              <div className="space-y-1">
-                {todos.slice(0, 30).map((t, i) => (
-                  <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.02]">
-                    <span className={cn(
-                      "h-2 w-2 rounded-full shrink-0",
-                      t.status === "completed" ? "bg-emerald-500" :
-                      t.status === "in_progress" ? "bg-accent" :
-                      "bg-gray-600",
-                    )} />
-                    <span className="flex-1 text-sm text-gray-300 truncate">{t.title || "Untitled"}</span>
-                    <Badge variant={
-                      t.status === "completed" ? "success" :
-                      t.status === "in_progress" ? "default" :
-                      "muted"
-                    }>
-                      {t.status || "pending"}
-                    </Badge>
+            ))}
+          </div>
+
+          {/* Tabs */}
+          <Tabs defaultValue="tasks">
+            <TabsList>
+              <TabsTrigger value="tasks">{t("agent.tasks")}</TabsTrigger>
+              <TabsTrigger value="reports">{t("agent.reports")}</TabsTrigger>
+              <TabsTrigger value="conversations">{t("agent.chat")}</TabsTrigger>
+              <TabsTrigger value="traces">{t("agent.activity")}</TabsTrigger>
+              <TabsTrigger value="instruction">{t("agent.instruct")}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="tasks">
+              {todos.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">{t("agent.no_tasks")}</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{completedTodos}/{todos.length} {t("agent.completed")}</span>
+                    <span>{todoProgress}%</span>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </TabsContent>
+                  <Progress value={todoProgress} />
+                  <div className="space-y-1">
+                    {todos.slice(0, 30).map((td, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-surface-hover transition-colors">
+                        <span className={cn(
+                          "h-2 w-2 rounded-full shrink-0",
+                          td.status === "completed" ? "bg-emerald-500" :
+                          td.status === "in_progress" ? "bg-blue-500" :
+                          "bg-muted-foreground/40",
+                        )} />
+                        <span className="flex-1 text-sm text-foreground truncate">{td.title || "Untitled"}</span>
+                        <Badge variant={td.status === "completed" ? "success" : td.status === "in_progress" ? "default" : "muted"}>
+                          {td.status || "pending"}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </TabsContent>
 
-        {/* Reports */}
-        <TabsContent value="reports">
-          {reports.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-600">No reports</p>
-          ) : (
-            <div className="space-y-3">
-              {reports.map((r, i) => (
-                <Card key={i}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-medium text-white">{r.title}</p>
-                      <Badge variant={r.status === "final" ? "success" : "default"} className="mt-1">{r.status}</Badge>
+            <TabsContent value="reports">
+              {reports.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">{t("agent.no_reports")}</p>
+              ) : (
+                <div className="space-y-3">
+                  {reports.map((r, i) => (
+                    <div key={i} className="rounded-lg border border-border bg-surface p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{r.title}</p>
+                          <Badge variant={r.status === "final" ? "success" : "default"} className="mt-1">{r.status}</Badge>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">{formatRelativeTime(r.ts)}</span>
+                      </div>
+                      {r.body && (
+                        <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{r.body}</p>
+                      )}
                     </div>
-                    <span className="text-[11px] text-gray-600">{formatRelativeTime(r.ts)}</span>
-                  </div>
-                  {r.body && (
-                    <p className="mt-3 text-sm text-gray-400 whitespace-pre-wrap leading-relaxed">{r.body}</p>
-                  )}
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Conversations */}
-        <TabsContent value="conversations">
-          {conversations.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-600">No conversations</p>
-          ) : (
-            <div className="space-y-3 max-h-[500px] overflow-y-auto">
-              {conversations.map((m, i) => (
-                <div key={i} className={cn("flex gap-3", m.role === "assistant" ? "" : "flex-row-reverse")}>
-                  <div className={cn("shrink-0 mt-1 rounded-lg p-1.5", m.role === "assistant" ? "bg-accent/10" : "bg-gray-800")}>
-                    {m.role === "assistant" ? <Bot className="h-3.5 w-3.5 text-accent" /> : <User className="h-3.5 w-3.5 text-gray-400" />}
-                  </div>
-                  <div className={cn(
-                    "glass-card max-w-[80%] p-3",
-                    m.role === "assistant" ? "border-accent/10" : "",
-                  )}>
-                    <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                    <p className="mt-1 text-[10px] text-gray-600">{formatRelativeTime(m.ts)}</p>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+              )}
+            </TabsContent>
 
-        {/* Activity Traces */}
-        <TabsContent value="traces">
-          {traces.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-600">No activity</p>
-          ) : (
-            <div className="space-y-1">
-              {traces.map((e, i) => (
-                <div key={i} className="flex items-start gap-3 rounded-lg px-3 py-2 text-xs hover:bg-white/[0.02]">
-                  <span className="shrink-0 w-20 text-gray-600 font-mono text-[11px]">
-                    {new Date(e.ts).toLocaleTimeString()}
-                  </span>
-                  <Badge variant="muted">{e.trace_type}</Badge>
-                  <span className="text-gray-400 truncate">
-                    {JSON.stringify(e.payload).slice(0, 100)}
-                  </span>
+            <TabsContent value="conversations">
+              {conversations.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">{t("agent.no_conversations")}</p>
+              ) : (
+                <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                  {conversations.map((m, i) => (
+                    <div key={i} className={cn("flex gap-3", m.role === "assistant" ? "" : "flex-row-reverse")}>
+                      <div className={cn("shrink-0 mt-1 rounded-md p-1.5", m.role === "assistant" ? "bg-muted" : "bg-muted")}>
+                        {m.role === "assistant" ? <Bot className="h-3.5 w-3.5 text-foreground" /> : <User className="h-3.5 w-3.5 text-muted-foreground" />}
+                      </div>
+                      <div className="rounded-lg border border-border bg-surface max-w-[80%] p-3">
+                        <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{m.content}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{formatRelativeTime(m.ts)}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+              )}
+            </TabsContent>
 
-        {/* Instruction */}
-        <TabsContent value="instruction">
-          <Card>
-            <p className="text-xs text-gray-500 mb-3">
-              Send instruction to the queen. It will be decomposed and may be delegated to this or other agents.
-            </p>
-            <textarea
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder="Your instruction..."
-              className="w-full h-28 rounded-lg border border-border bg-[#0d1117] px-3 py-2 text-sm text-gray-300 placeholder:text-gray-600 resize-none focus:outline-none focus:border-accent/50"
-            />
-            <div className="mt-3 flex items-center gap-3">
-              <button
-                onClick={handleSend}
-                disabled={sending || !instruction.trim()}
-                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/80 disabled:opacity-50"
-              >
-                <Send className="h-3.5 w-3.5" />
-                {sending ? "Sending..." : "Send"}
-              </button>
-              {sent && <span className="text-sm text-emerald-400">{sent}</span>}
-              {err && <span className="text-sm text-red-400">{err}</span>}
+            <TabsContent value="traces">
+              {traces.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">{t("agent.no_activity")}</p>
+              ) : (
+                <div className="space-y-1">
+                  {traces.map((e, i) => (
+                    <div key={i} className="flex items-start gap-3 rounded-md px-3 py-2 text-xs hover:bg-surface-hover transition-colors">
+                      <span className="shrink-0 w-20 text-muted-foreground font-mono text-[11px]">
+                        {new Date(e.ts).toLocaleTimeString()}
+                      </span>
+                      <Badge variant="muted">{e.trace_type}</Badge>
+                      <span className="text-muted-foreground truncate">
+                        {JSON.stringify(e.payload).slice(0, 100)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="instruction">
+              <div className="rounded-lg border border-border bg-surface p-4">
+                <p className="text-xs text-muted-foreground mb-3">{t("agent.instruction_hint")}</p>
+                <textarea
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  placeholder={t("agent.instruction_placeholder")}
+                  className="w-full h-28 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-border"
+                />
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || !instruction.trim()}
+                    className="flex items-center gap-1.5 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:opacity-80 disabled:opacity-40"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {sending ? t("agent.sending") : t("agent.send")}
+                  </button>
+                  {sent && <span className="text-sm text-emerald-500 font-medium">{sent}</span>}
+                  {err && <span className="text-sm text-red-500">{err}</span>}
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        {/* Properties sidebar */}
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-surface p-4 space-y-4">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{t("agent.properties")}</h3>
+
+            {config?.description && (
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">{t("agent.description")}</p>
+                <p className="text-[13px] text-foreground leading-relaxed">{config.description}</p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-[11px] text-muted-foreground mb-1">{t("agent.lifecycle")}</p>
+              <StatusBadge status={ant?.lifecycle ?? "idle"} />
             </div>
-          </Card>
-        </TabsContent>
-      </Tabs>
+
+            <div>
+              <p className="text-[11px] text-muted-foreground mb-1">{t("agent.superior")}</p>
+              {config?.superior ? (
+                <Link to={`/agent/${config.superior}`} className="text-[13px] text-foreground hover:underline font-medium">
+                  {config.superior}
+                </Link>
+              ) : (
+                <span className="text-[13px] text-muted-foreground">{t("agent.root")}</span>
+              )}
+            </div>
+
+            {config?.subordinates && config.subordinates.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">{t("agent.subordinates")}</p>
+                <div className="flex flex-wrap gap-1">
+                  {config.subordinates.map((s) => (
+                    <Link key={s} to={`/agent/${s}`} className="text-[12px] text-foreground hover:underline font-medium bg-muted rounded-md px-2 py-0.5">
+                      {s}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {config?.tools && config.tools.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">{t("agent.tools")}</p>
+                <div className="flex flex-wrap gap-1">
+                  {(config.tools as string[]).map((tool) => (
+                    <span key={tool} className="text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+                      {tool}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

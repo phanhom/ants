@@ -25,7 +25,7 @@ from ants.runtime.config import (
 from ants.runtime.docker_manager import DockerSpawner, WORKER_SERVICE_PORT
 from ants.runtime.models import AgentConfig
 from ants.runtime.runtime_config import get_ants_config, load_runtime_config, runtime_config_to_env
-from ants.runtime.status import StatusAggregator, StatusScope, build_recursive_status_tree
+from ants.runtime.status import StatusAggregator, build_recursive_status_tree
 from ants.runtime.trace_log import trace_log
 from ants.runtime.traces import append_aip_message, ensure_trace_dirs, write_log
 
@@ -110,16 +110,20 @@ _colony_status_cache: dict[str, tuple[float, dict]] = {}
 @app.get("/v1/status")
 async def status(
     request: Request,
-    scope: StatusScope = Query(StatusScope.colony),
+    scope: str = Query("colony"),
     root: str | None = Query(None),
 ) -> dict:
-    """Return colony, self, or subtree status for the queen topology."""
+    """Return colony/group, self, or subtree status for the queen topology."""
     root_config: AgentConfig = app.state.root_config
     visible_agents: list[AgentConfig] = app.state.visible_agents
     request_base_url = _request_base_url(request)
 
-    # Only cache full colony response (scope=colony, no root).
-    if scope == StatusScope.colony and root is None:
+    # Accept "colony" as alias for "group" for backward compatibility
+    if scope == "colony":
+        scope = "group"
+
+    # Only cache full group response (scope=group, no root).
+    if scope == "group" and root is None:
         ttl = _status_cache_ttl_sec()
         if ttl > 0:
             now = time.monotonic()
@@ -128,30 +132,30 @@ async def status(
                 expiry_ts, payload = entry
                 if now < expiry_ts:
                     return payload
-            colony = StatusAggregator(root_config).build(
+            group = StatusAggregator(root_config).build(
                 visible_agents, request_base_url=request_base_url
             )
-            _colony_status_cache[request_base_url] = (now + ttl, colony.model_dump(mode="json"))
+            _colony_status_cache[request_base_url] = (now + ttl, group.model_dump(mode="json"))
             return _colony_status_cache[request_base_url][1]
 
     aggregator = StatusAggregator(root_config)
-    colony = aggregator.build(visible_agents, request_base_url=request_base_url)
+    group = aggregator.build(visible_agents, request_base_url=request_base_url)
 
-    if scope == StatusScope.self_scope:
-        root_status = next((item for item in colony.ants if item.agent_id == root_config.agent_id), None)
+    if scope == "self":
+        root_status = next((a for a in group.agents if a.agent_id == root_config.agent_id), None)
         if root_status is None:
             raise HTTPException(404, "Root agent status not found")
         return root_status.model_dump(mode="json")
 
-    if scope == StatusScope.subtree:
+    if scope == "subtree":
         target_root = root or root_config.agent_id
-        statuses = {item.agent_id: item for item in colony.ants}
+        statuses = {a.agent_id: a for a in group.agents}
         if target_root not in statuses:
             raise HTTPException(404, f"Unknown root agent_id: {target_root}")
-        subtree = build_recursive_status_tree(target_root, statuses=statuses, topology=colony.topology)
+        subtree = build_recursive_status_tree(target_root, statuses=statuses, topology=group.topology)
         return subtree.model_dump(mode="json")
 
-    return colony.model_dump(mode="json")
+    return group.model_dump(mode="json")
 
 
 # ---------- Interface 2: Container-to-container conversation (AIP); supports cross-server ----------

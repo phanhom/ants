@@ -11,12 +11,12 @@ import { formatRelativeTime, truncate } from "@/lib/utils";
 import type { TraceEvent } from "@/api";
 
 const EVENT_CONFIG: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; label: string }> = {
-  aip: { icon: ArrowRightLeft, color: "text-blue-400", label: "AIP" },
-  report: { icon: FileText, color: "text-emerald-400", label: "Report" },
-  todo: { icon: CheckCircle2, color: "text-amber-400", label: "Todo" },
-  conversation: { icon: MessageSquare, color: "text-purple-400", label: "Chat" },
-  llm_usage: { icon: Zap, color: "text-yellow-400", label: "LLM" },
-  log: { icon: AlertCircle, color: "text-gray-400", label: "Log" },
+  aip: { icon: ArrowRightLeft, color: "text-blue-500", label: "AIP" },
+  report: { icon: FileText, color: "text-emerald-500", label: "Report" },
+  todo: { icon: CheckCircle2, color: "text-amber-500", label: "Todo" },
+  conversation: { icon: MessageSquare, color: "text-purple-500", label: "Chat" },
+  llm_usage: { icon: Zap, color: "text-yellow-500", label: "LLM" },
+  log: { icon: AlertCircle, color: "text-muted-foreground", label: "Log" },
 };
 
 function eventSummary(e: TraceEvent): string {
@@ -46,7 +46,7 @@ function eventSummary(e: TraceEvent): string {
 export function ActivityFeed({ events }: { events: TraceEvent[] }) {
   if (!events.length) {
     return (
-      <div className="flex items-center justify-center py-12 text-sm text-gray-600">
+      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
         <Clock className="mr-2 h-4 w-4" />
         No recent activity
       </div>
@@ -61,19 +61,19 @@ export function ActivityFeed({ events }: { events: TraceEvent[] }) {
         return (
           <div
             key={`${e.ts}-${i}`}
-            className="flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-white/[0.02]"
+            className="flex items-start gap-3 rounded-md px-3 py-2.5 transition-colors hover:bg-surface-hover"
           >
             <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${config.color}`} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[13px] text-white truncate">
+                <span className="text-[13px] text-foreground font-medium truncate">
                   {eventSummary(e)}
                 </span>
-                <span className="shrink-0 text-[11px] text-gray-600">
+                <span className="shrink-0 text-[11px] text-muted-foreground">
                   {formatRelativeTime(e.ts)}
                 </span>
               </div>
-              <p className="mt-0.5 text-[11px] text-gray-500">
+              <p className="mt-0.5 text-[11px] text-muted-foreground font-medium">
                 {e.agent_id}
               </p>
             </div>

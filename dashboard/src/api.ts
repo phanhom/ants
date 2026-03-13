@@ -17,23 +17,21 @@ export interface SingleAntStatus {
   port?: number;
   ok: boolean;
   base_url?: string;
-  pending_todos: number;
+  pending_tasks: number;
   recent_errors: number;
   waiting_for_approval: boolean;
-  last_report_at?: string;
-  last_aip_at?: string;
+  last_message_at?: string;
   last_seen_at?: string;
-  container_name?: string;
-  container_state?: string;
+  metadata?: Record<string, unknown>;
   work?: WorkSnapshot;
 }
 
 export interface WorkSnapshot {
-  todos: Array<{ title?: string; status?: string; ts?: string }>;
+  tasks: Array<{ title?: string; status?: string; ts?: string }>;
   reports: Array<Record<string, unknown>>;
-  recent_aip: Array<Record<string, unknown>>;
+  recent_messages: Array<Record<string, unknown>>;
   last_seen?: string;
-  pending_todos: number;
+  pending_tasks: number;
 }
 
 export interface ColonyStatus {
@@ -42,7 +40,7 @@ export interface ColonyStatus {
   timestamp: string;
   topology: Record<string, string[]>;
   waiting_for_approval: boolean;
-  ants: SingleAntStatus[];
+  agents: SingleAntStatus[];
 }
 
 export interface RecursiveNode {
@@ -188,6 +186,50 @@ export interface ConversationsResponse {
 export function getConversations(agentId: string, limit = 100) {
   const q = new URLSearchParams({ agent_id: agentId, limit: String(limit) });
   return json<ConversationsResponse>(`/api/conversations?${q}`);
+}
+
+// ── Costs By Agent API ───────────────────────────────────────────────────
+
+export interface AgentCostRow {
+  agent_id: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  calls: number;
+}
+
+export interface CostsByAgentResponse {
+  ok: boolean;
+  agents: AgentCostRow[];
+  db_configured?: boolean;
+}
+
+export function getCostsByAgent(params?: { since?: string; until?: string }) {
+  const q = new URLSearchParams();
+  if (params?.since) q.set("since", params.since);
+  if (params?.until) q.set("until", params.until);
+  return json<CostsByAgentResponse>(`/api/costs/by-agent?${q}`);
+}
+
+// ── Agent Configs API ───────────────────────────────────────────────────
+
+export interface AgentConfigEntry {
+  agent_id: string;
+  role: string;
+  description?: string;
+  superior?: string | null;
+  subordinates?: string[];
+  tools?: string[];
+  [key: string]: unknown;
+}
+
+export interface AgentConfigsResponse {
+  ok: boolean;
+  configs: AgentConfigEntry[];
+}
+
+export function getAgentConfigs() {
+  return json<AgentConfigsResponse>("/api/agents/config");
 }
 
 // ── Files (MinIO) API ────────────────────────────────────────────────────────

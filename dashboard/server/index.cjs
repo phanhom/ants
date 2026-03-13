@@ -261,6 +261,50 @@ const server = http.createServer(async (req, res) => {
       return jsonResponse(res, { ok: true, messages, db_configured: true });
     }
 
+    // ── GET /api/costs/by-agent ────────────────────────────────────────────
+    if (pathname === "/api/costs/by-agent" && req.method === "GET") {
+      const cfg = getMysqlConfig();
+      if (!cfg || !mysql) return dbUnavailable(res);
+      const since = url.searchParams.get("since");
+      const until = url.searchParams.get("until");
+      let sql = "SELECT agent_id, payload FROM trace_events WHERE trace_type = 'llm_usage'";
+      const params = [];
+      if (since) { sql += " AND ts >= ?"; params.push(since); }
+      if (until) { sql += " AND ts <= ?"; params.push(until); }
+      const rows = await queryDb(sql, params);
+      if (rows === null) return dbUnavailable(res);
+      const byAgent = {};
+      for (const r of rows) {
+        const p = typeof r.payload === "string" ? JSON.parse(r.payload || "{}") : r.payload || {};
+        const aid = r.agent_id || "unknown";
+        if (!byAgent[aid]) byAgent[aid] = { agent_id: aid, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, calls: 0 };
+        byAgent[aid].prompt_tokens += p.prompt_tokens || 0;
+        byAgent[aid].completion_tokens += p.completion_tokens || 0;
+        byAgent[aid].total_tokens += p.total_tokens || 0;
+        byAgent[aid].calls += 1;
+      }
+      const agents = Object.values(byAgent).sort((a, b) => b.total_tokens - a.total_tokens);
+      return jsonResponse(res, { ok: true, agents, db_configured: true });
+    }
+
+    // ── GET /api/agents/config ──────────────────────────────────────────────
+    if (pathname === "/api/agents/config" && req.method === "GET") {
+      const configDir = process.env.AGENTS_CONFIG_DIR || "/app/configs/agents";
+      try {
+        const fsMod = require("fs");
+        const pathMod = require("path");
+        const files = fsMod.readdirSync(configDir).filter((f) => f.endsWith(".json"));
+        const configs = files.map((f) => {
+          try {
+            return JSON.parse(fsMod.readFileSync(pathMod.join(configDir, f), "utf-8"));
+          } catch { return null; }
+        }).filter(Boolean);
+        return jsonResponse(res, { ok: true, configs });
+      } catch (e) {
+        return jsonResponse(res, { ok: true, configs: [], message: "Config directory not available" });
+      }
+    }
+
     // ── MinIO: GET /api/files ──────────────────────────────────────────────
     if (pathname === "/api/files" && req.method === "GET") {
       const mc = getMinioClient();

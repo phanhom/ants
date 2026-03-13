@@ -8,7 +8,6 @@ import threading
 from fastapi import FastAPI, HTTPException, Query, Request
 
 from aip import AIPAction, AIPMessage, AIPStatus
-from ants.runtime.status import StatusScope
 from ants.runtime.config import load_agent_config, load_all_agent_configs
 from ants.runtime.status import build_worker_self_status, build_worker_subtree_status
 from ants.runtime.trace_log import trace_log
@@ -82,12 +81,12 @@ async def aip_receive(body: dict) -> dict:
 @app.get("/v1/status")
 async def status(
     request: Request,
-    scope: StatusScope = Query(StatusScope.self_scope),
+    scope: str = Query("self"),
 ) -> dict:
     """Return self status by default, or a recursive subtree if requested."""
     config = load_agent_config()
     request_base_url = str(request.base_url).rstrip("/")
-    if scope == StatusScope.subtree:
+    if scope == "subtree":
         agents = load_all_agent_configs()
         subtree = await build_worker_subtree_status(
             config,

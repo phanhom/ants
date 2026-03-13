@@ -13,19 +13,19 @@ interface MetricCardProps {
 
 export function MetricCard({ title, value, subtitle, icon: Icon, className }: MetricCardProps) {
   return (
-    <Card className={cn("group transition-all hover:border-border-strong", className)}>
+    <Card className={cn("group transition-all hover:border-border", "shadow-none border border-border bg-surface", className)}>
       <div className="flex items-start justify-between">
         <div>
-          <CardTitle>{title}</CardTitle>
-          <CardContent>
-            <p className="metric-value mt-1">{value}</p>
+          <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</CardTitle>
+          <CardContent className="p-0 mt-3">
+            <p className="text-3xl font-semibold tracking-tight text-foreground">{value}</p>
             {subtitle && (
-              <p className="mt-1 text-xs text-gray-500">{subtitle}</p>
+              <p className="mt-1.5 text-xs text-muted-foreground font-medium">{subtitle}</p>
             )}
           </CardContent>
         </div>
-        <div className="rounded-lg bg-white/[0.04] p-2">
-          <Icon className="h-4 w-4 text-gray-500 transition-colors group-hover:text-accent" />
+        <div className="rounded-md bg-muted p-2">
+          <Icon className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
         </div>
       </div>
     </Card>

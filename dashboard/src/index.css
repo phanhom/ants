@@ -1,19 +1,43 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --background: #f8fafc; /* very light gray, almost white */
+    --foreground: #0f172a; /* dark slate text */
+    --surface: #ffffff; /* pure white surface */
+    --surface-hover: #f1f5f9;
+    --border: #e2e8f0;
+    --accent: #000000;
+    --accent-foreground: #ffffff;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+  }
+
+  .dark {
+    --background: #09090b; /* very dark, neutral black */
+    --foreground: #fafafa;
+    --surface: #121214;
+    --surface-hover: #1f1f22;
+    --border: #27272a;
+    --accent: #ffffff;
+    --accent-foreground: #000000;
+    --muted: #1f1f22;
+    --muted-foreground: #a1a1aa;
+  }
+
   * {
-    border-color: rgba(240, 246, 252, 0.08);
+    border-color: var(--border);
   }
 
   body {
     margin: 0;
     font-family: "Inter", system-ui, -apple-system, sans-serif;
-    background: #0d1117;
-    color: #e6edf3;
+    background-color: var(--background);
+    color: var(--foreground);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -26,28 +50,29 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(240, 246, 252, 0.1);
+    background: var(--border);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(240, 246, 252, 0.2);
+    background: var(--muted-foreground);
   }
 }
 
 @layer components {
+  /* Flat, clean card style, no gradients, no shadows or blur unless absolutely needed */
   .glass-card {
-    @apply rounded-xl border border-border bg-surface backdrop-blur-[20px];
+    @apply rounded-lg border border-border bg-surface;
   }
 
   .glass-card-raised {
-    @apply rounded-xl border border-border bg-surface-raised backdrop-blur-[20px];
+    @apply rounded-lg border border-border bg-surface shadow-sm;
   }
 
   .metric-value {
-    @apply text-3xl font-semibold tracking-tight;
+    @apply text-3xl font-medium tracking-tight text-foreground;
   }
 
   .section-title {
-    @apply text-xs font-medium uppercase tracking-wider text-gray-500;
+    @apply text-xs font-semibold tracking-wide text-muted-foreground uppercase;
   }
 }

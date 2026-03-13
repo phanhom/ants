@@ -70,32 +70,5 @@ class AgentConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-class AgentStatus(BaseModel):
-    """Status summary exposed by the outward-facing status API."""
 
-    agent_id: str
-    role: str
-    superior: str | None = None
-    authority_weight: int
-    lifecycle: AgentLifecycle = AgentLifecycle.idle
-    pending_todos: int = 0
-    recent_errors: int = 0
-    waiting_for_approval: bool = False
-    last_report_at: datetime | None = None
-    last_aip_at: datetime | None = None
-    last_seen_at: datetime | None = None
-    container_name: str | None = None
-    container_state: str | None = None
-
-
-class StatusEnvelope(BaseModel):
-    """Single outward-facing status document."""
-
-    ok: bool = True
-    service: str = "ants"
-    port: int = 22000
-    root_agent_id: str
-    timestamp: datetime = Field(default_factory=utc_now)
-    topology: dict[str, list[str]] = Field(default_factory=dict)
-    waiting_for_approval: bool = False
-    ants: list[AgentStatus] = Field(default_factory=list)
+# AgentStatus and StatusEnvelope removed — use aip.AgentStatus and aip.GroupStatus from SDK v1.3.0+

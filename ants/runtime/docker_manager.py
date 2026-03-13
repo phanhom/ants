@@ -25,7 +25,10 @@ class DockerSpawner:
     """Create child ant containers idempotently. Used at startup or by 二把手 dynamically."""
 
     def __init__(self) -> None:
+        # Host path used by Docker daemon for bind-mount sources.
         self.project_root = Path((os.getenv("ANTS_HOST_PROJECT_ROOT") or "").strip()).expanduser()
+        # Container-local mirror of the repo for checking config files and creating trace dirs.
+        self.project_root_local = Path("/app/host")
         self.image = (os.getenv("ANTS_IMAGE") or "ants:latest").strip()
         self.network = (os.getenv("ANTS_NETWORK") or "").strip() or None
         self.client = None
@@ -36,8 +39,8 @@ class DockerSpawner:
                 self.client = None
 
     def available(self) -> bool:
-        """Whether Docker is reachable and project root is set."""
-        return self.client is not None and self.project_root.exists()
+        """Whether Docker is reachable and host project root is configured."""
+        return self.client is not None and bool(str(self.project_root).strip())
 
     def child_container_name(self, agent_id: str) -> str:
         """Stable container naming for idempotent restarts."""
@@ -45,12 +48,12 @@ class DockerSpawner:
 
     def ensure_volume_dirs(self, agent_id: str) -> Path:
         """Create per-ant volume subdirs on host so binds work. Returns ant volume root."""
-        root = self.project_root / "volumes" / agent_id
+        root = self.project_root_local / "volumes" / agent_id
         for sub in _TRACE_SUBDIRS:
             (root / sub).mkdir(parents=True, exist_ok=True)
         for shared in ("shared/tools", "shared/inbox"):
-            (self.project_root / shared).mkdir(parents=True, exist_ok=True)
-        return root
+            (self.project_root_local / shared).mkdir(parents=True, exist_ok=True)
+        return self.project_root / "volumes" / agent_id
 
     def _volume_binds(self, agent_id: str, config_name: str) -> dict[str, dict[str, str]]:
         base = self.project_root
@@ -94,7 +97,7 @@ class DockerSpawner:
 
         self.ensure_volume_dirs(child.agent_id)
         config_file = f"{child.agent_id}.json"
-        if not (self.project_root / "configs" / "agents" / config_file).exists():
+        if not (self.project_root_local / "configs" / "agents" / config_file).exists():
             return None
         volumes = self._volume_binds(child.agent_id, config_file)
         queen_url = "http://host.docker.internal:22000"

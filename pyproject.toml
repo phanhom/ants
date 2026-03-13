@@ -9,7 +9,7 @@ description = "Multi-agent collaboration: each ant is a container, AIP protocol,
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "aip-protocol @ git+https://github.com/phanhom/aip.git@main#subdirectory=sdk-python",
+    "aip-protocol @ git+https://github.com/phanhom/aip.git@v1.3.0#subdirectory=sdk-python",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
